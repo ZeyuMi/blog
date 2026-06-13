@@ -1,5 +1,5 @@
-const STORE_KEY = "cuttingTracker.v7";
-const LEGACY_STORE_KEYS = ["cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
+const STORE_KEY = "cuttingTracker.v8";
+const LEGACY_STORE_KEYS = ["cuttingTracker.v7", "cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
 
 const FOOD_LIBRARY = {
@@ -224,17 +224,20 @@ function loadStore() {
       if (old) return normalizeStore({ version: 4, records: old, plans: {}, foods: FOOD_LIBRARY });
     } catch {}
   }
-  return normalizeStore({ version: 7, records: {}, plans: {}, foods: FOOD_LIBRARY });
+  return normalizeStore({ version: 8, records: {}, plans: {}, foods: FOOD_LIBRARY, deletedFoods: [] });
 }
 
 function normalizeStore(store) {
-  const foods = { ...(store.foods || {}), ...FOOD_LIBRARY };
+  const deletedFoods = Array.isArray(store.deletedFoods) ? store.deletedFoods : [];
+  const foods = { ...FOOD_LIBRARY, ...(store.foods || {}) };
+  deletedFoods.forEach((name) => delete foods[name]);
   const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods)]));
   return {
-    version: 7,
+    version: 8,
     records: store.records || {},
     plans,
     foods,
+    deletedFoods,
   };
 }
 
@@ -272,6 +275,56 @@ function templateMealItems(date, mealName, foods, mealIndex) {
 
 function saveStore() {
   localStorage.setItem(STORE_KEY, JSON.stringify(state.store));
+}
+
+function foodDef(name) {
+  return state.store.foods?.[name] || null;
+}
+
+function upsertFood(name, food) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return false;
+  state.store.deletedFoods = (state.store.deletedFoods || []).filter((item) => item !== cleanName);
+  state.store.foods[cleanName] = food;
+  return true;
+}
+
+function renameFoodReferences(from, to) {
+  if (!from || !to || from === to) return;
+  Object.values(state.store.plans || {}).forEach((p) => {
+    (p.meals || []).forEach((meal) => {
+      (meal.items || []).forEach((item) => {
+        if (item.food === from) {
+          item.food = to;
+          item.name = to;
+        }
+      });
+    });
+  });
+}
+
+function deleteFoodFromLibrary(name) {
+  const lib = foodDef(name);
+  Object.values(state.store.plans || {}).forEach((p) => {
+    (p.meals || []).forEach((meal) => {
+      (meal.items || []).forEach((item) => {
+        if (item.food !== name || item.custom || !lib) return;
+        const macro = scaleMacro(lib, item.amount);
+        item.custom = true;
+        item.kcal = macro.kcal;
+        item.p = macro.p;
+        item.c = macro.c;
+        item.f = macro.f;
+        item.baseAmount = item.amount || 1;
+      });
+    });
+  });
+  delete state.store.foods[name];
+  if (FOOD_LIBRARY[name]) {
+    const deleted = new Set(state.store.deletedFoods || []);
+    deleted.add(name);
+    state.store.deletedFoods = [...deleted];
+  }
 }
 
 function isoDate(date) {
@@ -326,7 +379,7 @@ function createPlan(date) {
         id: `m${mealIndex}i${itemIndex}`,
         food,
         amount,
-        unit: state.store?.foods?.[food]?.unit || FOOD_LIBRARY[food]?.unit || "g",
+        unit: foodDef(food)?.unit || "g",
       })),
     })),
   };
@@ -354,7 +407,7 @@ function record(date = state.date) {
 
 function foodMacro(item) {
   if (item.custom) return customMacro(item);
-  const f = state.store.foods[item.food] || FOOD_LIBRARY[item.food];
+  const f = foodDef(item.food);
   if (!f) return { kcal: 0, p: 0, c: 0, f: 0 };
   const k = f.perUnit ? Number(item.amount || 0) : Number(item.amount || 0) / 100;
   return { kcal: f.kcal * k, p: f.p * k, c: f.c * k, f: f.f * k };
@@ -441,7 +494,7 @@ function render(options = {}) {
   renderWeekbar();
   renderDates();
   document.querySelectorAll(".tab").forEach((btn) => btn.classList.toggle("is-active", btn.dataset.tab === state.tab));
-  const titles = { today: "概览", training: "训练", meals: "饮食", water: "饮水", body: "身体" };
+  const titles = { today: "概览", training: "训练", meals: "饮食", library: "食物库", water: "饮水", body: "身体" };
   document.getElementById("pageTitle").textContent = `${titles[state.tab]} · ${plan().day}`;
   document.getElementById("dateContext").textContent = dateContextText();
   const view = document.getElementById("view");
@@ -576,7 +629,12 @@ const VIEWS = {
     return html(`<div class="stack">
       ${p.meals.map((meal) => mealCard(meal, r)).join("")}
       ${addFoodPanel(p)}
-      ${foodLibraryPanel()}
+    </div>`);
+  },
+
+  library() {
+    return html(`<div class="stack">
+      ${foodLibraryEditor()}
     </div>`);
   },
 
@@ -759,7 +817,7 @@ function mealChoices(meal) {
 }
 
 function defaultChoiceAmount(food) {
-  const lib = state.store.foods[food] || FOOD_LIBRARY[food];
+  const lib = foodDef(food);
   if (DEFAULT_CHOICE_AMOUNTS[food] !== undefined) return DEFAULT_CHOICE_AMOUNTS[food];
   if (lib?.perUnit) return 1;
   if (lib?.unit === "ml") return 100;
@@ -768,7 +826,7 @@ function defaultChoiceAmount(food) {
 }
 
 function choiceRow(meal, food, amount) {
-  const lib = state.store.foods[food] || FOOD_LIBRARY[food];
+  const lib = foodDef(food);
   const unit = lib?.unit || "g";
   const macro = scaleMacro(lib, amount);
   const searchText = `${food} ${lib?.note || ""}`.toLowerCase();
@@ -852,18 +910,55 @@ function addFoodPanel(p) {
   </section>`;
 }
 
-function foodLibraryPanel() {
-  const custom = foodNames().filter((name) => !FOOD_LIBRARY[name]).slice(0, 12);
-  const rows = custom.length
-    ? custom.map((name) => {
-        const f = state.store.foods[name];
-        return `<div class="library-row"><b>${esc(name)}</b><small>${f.perUnit ? "每单位" : "每100g"} · ${fmt(f.kcal)} kcal · P${fmt(f.p, 1)} C${fmt(f.c, 1)} F${fmt(f.f, 1)}</small></div>`;
-      }).join("")
-    : `<p class="empty compact">你第一次录入的新食物会出现在这里。</p>`;
-  return `<section class="panel soft">
-    <div class="section-title"><h2>我的食物库</h2><small>${Object.keys(state.store.foods).length} 个食物</small></div>
-    <div class="library-list">${rows}</div>
+function foodLibraryEditor() {
+  const names = foodNames();
+  const rows = names.length
+    ? names.map((name) => libraryFoodRow(name, foodDef(name))).join("")
+    : `<p class="empty compact">食物库目前是空的，可以先添加一个常吃食物。</p>`;
+  return `<section class="panel library-editor-panel">
+    <div class="section-title"><h2>食物库</h2><small><span data-library-count>${names.length} 个食物</span></small></div>
+    <label class="choice-search library-search"><span>搜索食物</span><input type="search" data-library-search placeholder="输入食物名，比如沙拉、卤牛肉、凉皮" /></label>
+    <details class="nutrition-details add-library-details">
+      <summary>添加新食物</summary>
+      <form id="addLibraryFoodForm" class="form-grid library-food-form">
+        ${libraryFoodFields("", { unit: "g", kcal: "", p: "", c: "", f: "", note: "", perUnit: false })}
+        <button class="primary-button span-2" type="submit">保存到食物库</button>
+      </form>
+    </details>
+    <div class="library-list full-library-list">${rows}</div>
   </section>`;
+}
+
+function libraryFoodFields(name, f) {
+  return `${field("name", "名称", name, "食物名称")}
+    ${field("unit", "单位", f.unit || "g", "g/ml/份/个/颗")}
+    <label class="field span-2"><span>计算方式</span><select name="mode">
+      <option value="per100" ${f.perUnit ? "" : "selected"}>按每100g/ml计算</option>
+      <option value="perUnit" ${f.perUnit ? "selected" : ""}>按每个/颗/份计算</option>
+    </select></label>
+    ${field("kcal", "热量 kcal", f.kcal ?? "", "每100g或每单位")}
+    ${field("p", "蛋白 g", f.p ?? "", "每100g或每单位")}
+    ${field("c", "碳水 g", f.c ?? "", "每100g或每单位")}
+    ${field("f", "脂肪 g", f.f ?? "", "每100g或每单位")}
+    ${field("note", "备注", f.note || "", "包装来源/估算说明", "span-2")}`;
+}
+
+function libraryFoodRow(name, f) {
+  if (!f) return "";
+  const mode = f.perUnit ? `每${f.unit || "单位"}` : `每100${f.unit || "g"}`;
+  const source = FOOD_LIBRARY[name] ? "内置" : "自建";
+  const searchText = `${name} ${f.note || ""} ${source}`.toLowerCase();
+  return `<details class="library-row" data-library-row="${esc(searchText)}">
+    <summary>
+      <span><b>${esc(name)}</b><small>${source} · ${mode} · ${fmt(f.kcal)} kcal · P${fmt(f.p, 1)} C${fmt(f.c, 1)} F${fmt(f.f, 1)}${f.note ? ` · ${esc(f.note)}` : ""}</small></span>
+    </summary>
+    <form class="editLibraryFoodForm form-grid library-food-form">
+      <input type="hidden" name="originalName" value="${esc(name)}" />
+      ${libraryFoodFields(name, f)}
+      <button class="primary-button" type="submit">保存修改</button>
+      <button class="plain-button danger-button" data-delete-library-food="${esc(name)}" type="button">删除食物</button>
+    </form>
+  </details>`;
 }
 
 function foodNames() {
@@ -1014,7 +1109,7 @@ document.addEventListener("click", async (e) => {
         id: uid("food"),
         food,
         amount: Number(choiceBtn.dataset.choiceAmount || 0),
-        unit: state.store.foods[food]?.unit || FOOD_LIBRARY[food]?.unit || "g",
+        unit: foodDef(food)?.unit || "g",
       });
       saveStore();
       renderPreservingScroll();
@@ -1058,6 +1153,16 @@ document.addEventListener("click", async (e) => {
     delete record().foods[itemId];
     saveStore(); renderPreservingScroll(); return;
   }
+  const libraryDelete = e.target.closest("[data-delete-library-food]");
+  if (libraryDelete) {
+    const name = libraryDelete.dataset.deleteLibraryFood;
+    if (!name) return;
+    if (!confirm(`删除“${name}”？已经加到饮食里的记录会保留当时的营养数据。`)) return;
+    deleteFoodFromLibrary(name);
+    saveStore();
+    renderPreservingScroll();
+    return;
+  }
 });
 
 document.addEventListener("submit", (e) => {
@@ -1076,16 +1181,39 @@ document.addEventListener("submit", (e) => {
     const amount = Number(data.get("amount") || 0);
     const manual = ["kcal", "p", "c", "f"].some((key) => String(data.get(key) || "").trim() !== "");
     if (meal && food) {
-      if (!state.store.foods[food] || manual) {
+      if (!foodDef(food) || manual) {
         const nextFood = foodFromForm(data);
         if (!nextFood) {
           alert("这个食物还没在食物库里。请先展开“第一次录入或修正营养”，填每100g或每单位的营养。");
           return;
         }
-        state.store.foods[food] = nextFood;
+        upsertFood(food, nextFood);
       }
-      meal.items.push({ id: uid("food"), food, amount, unit: state.store.foods[food]?.unit || data.get("unit") || "g" });
+      meal.items.push({ id: uid("food"), food, amount, unit: foodDef(food)?.unit || data.get("unit") || "g" });
     }
+  }
+  if (e.target.id === "addLibraryFoodForm") {
+    const name = String(data.get("name") || "").trim();
+    const nextFood = foodFromForm(data);
+    if (!name || !nextFood) {
+      alert("请填写食物名称，以及至少一项有效的热量或宏量营养。");
+      return;
+    }
+    upsertFood(name, nextFood);
+  }
+  if (e.target.classList.contains("editLibraryFoodForm")) {
+    const originalName = String(data.get("originalName") || "").trim();
+    const name = String(data.get("name") || "").trim();
+    const nextFood = foodFromForm(data);
+    if (!name || !nextFood) {
+      alert("请填写食物名称，以及至少一项有效的热量或宏量营养。");
+      return;
+    }
+    if (originalName && originalName !== name) {
+      renameFoodReferences(originalName, name);
+      deleteFoodFromLibrary(originalName);
+    }
+    upsertFood(name, nextFood);
   }
   if (e.target.id === "customFoodForm") {
     const p = editablePlan();
@@ -1131,14 +1259,14 @@ document.addEventListener("submit", (e) => {
       if (data.get("rememberFood") === "on") {
         const perUnit = ["份", "个", "颗"].includes(unit);
         const factor = perUnit ? Math.max(0.01, amount || 1) : Math.max(0.01, amount / 100);
-        state.store.foods[name] = {
+        upsertFood(name, {
           unit,
           kcal: rnd(macro.kcal / factor),
           p: rnd(macro.p / factor),
           c: rnd(macro.c / factor),
           f: rnd(macro.f / factor),
           perUnit,
-        };
+        });
         item.custom = false;
         delete item.kcal; delete item.p; delete item.c; delete item.f;
       } else {
@@ -1186,6 +1314,8 @@ document.addEventListener("input", (e) => {
   if (editFoodForm) syncEditFoodForm(editFoodForm, e.target.name);
   const choiceSearch = e.target.closest("[data-choice-search]");
   if (choiceSearch) syncChoiceSearch(choiceSearch);
+  const librarySearch = e.target.closest("[data-library-search]");
+  if (librarySearch) syncLibrarySearch(librarySearch);
 });
 
 document.addEventListener("change", (e) => {
@@ -1197,12 +1327,16 @@ document.addEventListener("change", (e) => {
   if (editFoodForm) syncEditFoodForm(editFoodForm, e.target.name);
   const choiceSearch = e.target.closest("[data-choice-search]");
   if (choiceSearch) syncChoiceSearch(choiceSearch);
+  const librarySearch = e.target.closest("[data-library-search]");
+  if (librarySearch) syncLibrarySearch(librarySearch);
 });
 
 ["keyup", "search", "compositionend"].forEach((eventName) => {
   document.addEventListener(eventName, (e) => {
     const choiceSearch = e.target.closest?.("[data-choice-search]");
     if (choiceSearch) syncChoiceSearch(choiceSearch);
+    const librarySearch = e.target.closest?.("[data-library-search]");
+    if (librarySearch) syncLibrarySearch(librarySearch);
   });
 });
 
@@ -1215,6 +1349,7 @@ function foodFromForm(data) {
     c: Number(data.get("c") || 0),
     f: Number(data.get("f") || 0),
     perUnit: data.get("mode") === "perUnit",
+    note: String(data.get("note") || "").trim(),
   };
   if (![values.kcal, values.p, values.c, values.f].some((n) => Number.isFinite(n) && n > 0)) return null;
   return values;
@@ -1222,7 +1357,7 @@ function foodFromForm(data) {
 
 function syncFoodForm(form, fillFromLibrary = false) {
   const foodName = String(form.elements.food?.value || "").trim();
-  const saved = state.store.foods[foodName];
+  const saved = foodDef(foodName);
   if (saved && fillFromLibrary) {
     form.elements.unit.value = saved.unit || "g";
     form.elements.mode.value = saved.perUnit ? "perUnit" : "per100";
@@ -1290,6 +1425,21 @@ function syncChoiceSearch(input) {
   if (count) count.textContent = q ? `${shown} / ${rows.length} 个匹配` : `${rows.length} 个可选`;
 }
 
+function syncLibrarySearch(input) {
+  const panel = input.closest(".library-editor-panel");
+  const q = input.value.trim().toLowerCase();
+  if (!panel) return;
+  const rows = panel.querySelectorAll("[data-library-row]");
+  let shown = 0;
+  rows.forEach((row) => {
+    const match = !q || String(row.dataset.libraryRow || "").includes(q);
+    row.classList.toggle("is-hidden", !match);
+    if (match) shown += 1;
+  });
+  const count = panel.querySelector("[data-library-count]");
+  if (count) count.textContent = q ? `${shown} / ${rows.length} 个匹配` : `${rows.length} 个食物`;
+}
+
 document.getElementById("exportBtn").addEventListener("click", async () => {
   const blob = await buildXlsx(exportRows(), JSON.stringify(state.store));
   downloadBlob(blob, `cutting-tracker-${state.date}.xlsx`);
@@ -1346,7 +1496,7 @@ function exportRows() {
     stoolRows.push([date, r.stool?.done ? "是" : "否", r.stool?.time || "", r.stool?.shape || "", r.stool?.note || ""]);
     waterRows.push([date, r.waterMl || 0, p.waterTarget]);
   }
-  const foodLib = [["食物", "单位", "热量", "蛋白", "碳水", "脂肪", "按个数"], ...Object.entries(state.store.foods).map(([name, f]) => [name, f.unit, f.kcal, f.p, f.c, f.f, f.perUnit ? "是" : "否"])];
+  const foodLib = [["食物", "单位", "热量", "蛋白", "碳水", "脂肪", "计算方式", "备注"], ...Object.entries(state.store.foods).map(([name, f]) => [name, f.unit, f.kcal, f.p, f.c, f.f, f.perUnit ? "每单位" : "每100g/ml", f.note || ""])];
   return { "概览": summary, "饮食记录": foodRows, "训练记录": trainRows, "饮水记录": waterRows, "身体记录": bodyRows, "排便记录": stoolRows, "食物库": foodLib };
 }
 
