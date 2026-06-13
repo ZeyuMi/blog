@@ -1,5 +1,5 @@
-const STORE_KEY = "cuttingTracker.v6";
-const LEGACY_STORE_KEYS = ["cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
+const STORE_KEY = "cuttingTracker.v7";
+const LEGACY_STORE_KEYS = ["cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
 
 const FOOD_LIBRARY = {
@@ -208,14 +208,14 @@ function loadStore() {
       if (old) return normalizeStore({ version: 4, records: old, plans: {}, foods: FOOD_LIBRARY });
     } catch {}
   }
-  return normalizeStore({ version: 6, records: {}, plans: {}, foods: FOOD_LIBRARY });
+  return normalizeStore({ version: 7, records: {}, plans: {}, foods: FOOD_LIBRARY });
 }
 
 function normalizeStore(store) {
   const foods = { ...(store.foods || {}), ...FOOD_LIBRARY };
   const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods)]));
   return {
-    version: 6,
+    version: 7,
     records: store.records || {},
     plans,
     foods,
@@ -230,6 +230,7 @@ function normalizeSavedPlan(date, savedPlan, foods) {
       const next = item.food === "超级碗沙拉半份"
         ? { ...item, food: "沙拉蔬菜", amount: 200, unit: "g" }
         : { ...item };
+      if (next.custom && !next.baseAmount) next.baseAmount = Number(next.amount || 1);
       next.unit = foods[next.food]?.unit || next.unit || "g";
       return next;
     });
@@ -336,15 +337,35 @@ function record(date = state.date) {
 }
 
 function foodMacro(item) {
-  if (item.custom) return pickMacro(item);
+  if (item.custom) return customMacro(item);
   const f = state.store.foods[item.food] || FOOD_LIBRARY[item.food];
   if (!f) return { kcal: 0, p: 0, c: 0, f: 0 };
   const k = f.perUnit ? Number(item.amount || 0) : Number(item.amount || 0) / 100;
   return { kcal: f.kcal * k, p: f.p * k, c: f.c * k, f: f.f * k };
 }
 
+function customMacro(item) {
+  const baseAmount = Number(item.baseAmount || 1);
+  const k = baseAmount ? Number(item.amount || 0) / baseAmount : 1;
+  return {
+    kcal: Number(item.kcal || 0) * k,
+    p: Number(item.p || 0) * k,
+    c: Number(item.c || 0) * k,
+    f: Number(item.f || 0) * k,
+  };
+}
+
 function pickMacro(x) {
   return { kcal: Number(x.kcal || 0), p: Number(x.p || 0), c: Number(x.c || 0), f: Number(x.f || 0) };
+}
+
+function amountStep(unit) {
+  return ["份", "个", "颗"].includes(unit) ? 0.1 : 10;
+}
+
+function cleanAmount(value, unit) {
+  const n = Math.max(0, Number(value || 0));
+  return ["份", "个", "颗"].includes(unit) ? Math.round(n * 10) / 10 : Math.round(n);
 }
 
 function scaleMacro(food, amount) {
@@ -671,17 +692,19 @@ function mealCard(meal, r) {
       ${meal.items.map((item) => {
         const m = foodMacro(item);
         const rememberChecked = item.custom ? "" : "checked";
+        const step = amountStep(item.unit || "g");
+        const baseAmount = Number(item.baseAmount || item.amount || 1);
         return `<div class="food-task ${r.foods[item.id] ? "done" : "todo"}">
           <button class="food-check" data-check="food:${item.id}" type="button"><span class="task-dot"></span></button>
           <div class="food-main"><b>${item.food || item.name}</b><small>${item.amount}${item.unit || ""} · ${fmt(m.kcal)} kcal · P${fmt(m.p, 1)} C${fmt(m.c, 1)} F${fmt(m.f, 1)}</small></div>
           <div class="food-actions">
-            <button data-adjust="${meal.id}:${item.id}:-10" type="button">-</button>
-            <button data-adjust="${meal.id}:${item.id}:10" type="button">+</button>
+            <button data-adjust="${meal.id}:${item.id}:${-step}" type="button">-${step}</button>
+            <button data-adjust="${meal.id}:${item.id}:${step}" type="button">+${step}</button>
             <button data-delete-food="${meal.id}:${item.id}" type="button">删</button>
           </div>
           <details class="edit-details">
             <summary>编辑</summary>
-            <form class="editFoodForm form-grid">
+            <form class="editFoodForm form-grid" data-base-amount="${baseAmount}" data-base-kcal="${fmt(m.kcal, 4)}" data-base-p="${fmt(m.p, 4)}" data-base-c="${fmt(m.c, 4)}" data-base-f="${fmt(m.f, 4)}">
               <input type="hidden" name="mealId" value="${meal.id}" />
               <input type="hidden" name="itemId" value="${item.id}" />
               ${field("name", "名称", item.food || item.name || "", "食物名称")}
@@ -999,7 +1022,7 @@ document.addEventListener("click", async (e) => {
     const [mealId, itemId, delta] = adjust.dataset.adjust.split(":");
     const p = editablePlan();
     const item = p.meals.find((m) => m.id === mealId)?.items.find((x) => x.id === itemId);
-    if (item) item.amount = Math.max(0, Number(item.amount || 0) + Number(delta));
+    if (item) item.amount = cleanAmount(Number(item.amount || 0) + Number(delta), item.unit || "g");
     saveStore(); renderPreservingScroll(); return;
   }
   const del = e.target.closest("[data-delete-food]");
@@ -1083,7 +1106,7 @@ document.addEventListener("submit", (e) => {
       const macro = { kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0) };
       if (data.get("rememberFood") === "on") {
         const perUnit = ["份", "个", "颗"].includes(unit);
-        const factor = perUnit ? Math.max(1, amount || 1) : Math.max(0.01, amount / 100);
+        const factor = perUnit ? Math.max(0.01, amount || 1) : Math.max(0.01, amount / 100);
         state.store.foods[name] = {
           unit,
           kcal: rnd(macro.kcal / factor),
@@ -1100,6 +1123,7 @@ document.addEventListener("submit", (e) => {
         item.p = macro.p;
         item.c = macro.c;
         item.f = macro.f;
+        item.baseAmount = amount || 1;
       }
       item.food = name;
       item.name = name;
@@ -1134,6 +1158,8 @@ document.addEventListener("input", (e) => {
   if (form) syncFoodForm(form, e.target.name === "food");
   const estimateForm = e.target.closest(".estimateMealForm");
   if (estimateForm) syncEstimateForm(estimateForm);
+  const editFoodForm = e.target.closest(".editFoodForm");
+  if (editFoodForm) syncEditFoodForm(editFoodForm, e.target.name);
 });
 
 document.addEventListener("change", (e) => {
@@ -1141,6 +1167,8 @@ document.addEventListener("change", (e) => {
   if (form) syncFoodForm(form, e.target.name === "food");
   const estimateForm = e.target.closest(".estimateMealForm");
   if (estimateForm) syncEstimateForm(estimateForm);
+  const editFoodForm = e.target.closest(".editFoodForm");
+  if (editFoodForm) syncEditFoodForm(editFoodForm, e.target.name);
 });
 
 function foodFromForm(data) {
@@ -1198,6 +1226,18 @@ function syncEstimateForm(form) {
     protein: data.get("protein"),
   });
   preview.textContent = estimatePreviewText(macro);
+}
+
+function syncEditFoodForm(form, changedName) {
+  if (changedName !== "amount") return;
+  const amount = Number(form.elements.amount?.value || 0);
+  const baseAmount = Number(form.dataset.baseAmount || 1);
+  const k = baseAmount ? amount / baseAmount : 1;
+  ["kcal", "p", "c", "f"].forEach((key) => {
+    const input = form.elements[key];
+    const base = Number(form.dataset[`base${key[0].toUpperCase()}${key.slice(1)}`] || 0);
+    if (input) input.value = fmt(base * k, key === "kcal" ? 1 : 1);
+  });
 }
 
 document.getElementById("exportBtn").addEventListener("click", async () => {
