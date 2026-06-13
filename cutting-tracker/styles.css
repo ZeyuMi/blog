@@ -114,6 +114,11 @@ h1 { font-size: 27px; line-height: 1.08; }
   color: #34454d;
 }
 
+.danger-button {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
 .week-label {
   height: 42px;
   display: grid;
@@ -702,6 +707,40 @@ h1 { font-size: 27px; line-height: 1.08; }
   background: #fff;
 }
 
+.library-row.is-hidden {
+  display: none;
+}
+
+.library-row summary {
+  display: block;
+  cursor: pointer;
+  list-style: none;
+}
+
+.library-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.library-row summary::after {
+  content: "编辑";
+  float: right;
+  margin-left: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #edf3f5;
+  color: var(--deep);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.library-row[open] summary {
+  margin-bottom: 12px;
+}
+
+.library-row[open] summary::after {
+  content: "收起";
+}
+
 .library-row b,
 .library-row small {
   display: block;
@@ -711,6 +750,25 @@ h1 { font-size: 27px; line-height: 1.08; }
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.library-editor-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.library-editor-panel .section-title,
+.library-search,
+.add-library-details {
+  margin-bottom: 0;
+}
+
+.library-food-form {
+  margin-top: 10px;
+}
+
+.full-library-list {
+  max-height: none;
 }
 
 .switch-row {
@@ -767,7 +825,7 @@ canvas {
   width: min(100%, 560px);
   transform: translateX(-50%);
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 5px;
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
@@ -820,4 +878,5 @@ canvas {
   .meal-actions { display: grid; justify-items: end; }
   .estimate-actions { grid-template-columns: 1fr; }
   .choice-row { grid-template-columns: 1fr; }
+  .tab { font-size: 10px; }
 }
