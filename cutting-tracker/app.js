@@ -1,5 +1,5 @@
-const STORE_KEY = "cuttingTracker.v5";
-const LEGACY_STORE_KEYS = ["cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
+const STORE_KEY = "cuttingTracker.v6";
+const LEGACY_STORE_KEYS = ["cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
 
 const FOOD_LIBRARY = {
@@ -18,22 +18,22 @@ const FOOD_LIBRARY = {
   "西兰花/绿叶菜": { unit: "g", kcal: 26, p: 2, c: 4, f: 0.3 },
   "玉米": { unit: "g", kcal: 112, p: 4, c: 22, f: 1.2 },
   "金枪鱼罐头(水浸)": { unit: "g", kcal: 116, p: 25, c: 0, f: 1 },
-  "饭团": { unit: "g", kcal: 180, p: 4, c: 36, f: 2 },
-  "盒马糙米饭团": { unit: "g", kcal: 165, p: 4.5, c: 34, f: 1.5 },
-  "便利店饭团": { unit: "g", kcal: 180, p: 4, c: 36, f: 2 },
+  "饭团": { unit: "g", kcal: 180, p: 4, c: 36, f: 2, note: "按便利店普通饭团估算" },
+  "盒马糙米饭团": { unit: "g", kcal: 165, p: 4.5, c: 34, f: 1.5, note: "按包装饭团均值估算" },
+  "便利店饭团": { unit: "g", kcal: 180, p: 4, c: 36, f: 2, note: "不同馅料差异较大" },
   "即食玉米": { unit: "g", kcal: 112, p: 4, c: 22, f: 1.2 },
   "全麦面包": { unit: "g", kcal: 250, p: 9, c: 45, f: 4 },
   "超级碗果木鸡胸": { unit: "g", kcal: 165, p: 31, c: 0, f: 3.6 },
-  "超级碗谷物饭半份": { unit: "份", kcal: 140, p: 4, c: 28, f: 2, perUnit: true },
+  "超级碗谷物饭半份": { unit: "份", kcal: 140, p: 4, c: 28, f: 2, perUnit: true, note: "按半份谷物饭估算" },
   "超级碗沙拉半份": { unit: "份", kcal: 50, p: 2.6, c: 9, f: 0.4, perUnit: true, note: "按200g沙拉估算" },
-  "熟菠菜": { unit: "份", kcal: 35, p: 3, c: 5, f: 0.5, perUnit: true },
+  "熟菠菜": { unit: "份", kcal: 35, p: 3, c: 5, f: 0.5, perUnit: true, note: "按一小份熟菠菜估算" },
   "熟鸡蛋": { unit: "个", kcal: 72, p: 6.3, c: 0.6, f: 4.8, perUnit: true },
   "熟虾": { unit: "个", kcal: 9, p: 2, c: 0, f: 0.05, perUnit: true },
   "威士忌": { unit: "ml", kcal: 222, p: 0, c: 0, f: 0, note: "按40度、每100ml约222kcal估算" },
   "盒马烤蔬牛肉三色糙米能量碗": { unit: "g", kcal: 138, p: 7.9, c: 16.1, f: 4.3, note: "按整盒280g约386kcal估算" },
-  "盒马无糖无脂酸奶": { unit: "g", kcal: 56, p: 3.8, c: 6, f: 0.2 },
-  "麦当劳薯角": { unit: "份", kcal: 280, p: 4, c: 38, f: 13, perUnit: true },
-  "麦当劳鸡米花": { unit: "份", kcal: 320, p: 17, c: 22, f: 19, perUnit: true },
+  "盒马无糖无脂酸奶": { unit: "g", kcal: 56, p: 4, c: 9.5, f: 0.2, note: "无糖但含乳糖，按常见无脂酸奶估算" },
+  "麦当劳薯角": { unit: "份", kcal: 280, p: 4, c: 38, f: 13, perUnit: true, note: "按中等份估算" },
+  "麦当劳鸡米花": { unit: "份", kcal: 320, p: 17, c: 22, f: 19, perUnit: true, note: "按一份估算" },
   "阿根廷红虾": { unit: "g", kcal: 95, p: 20, c: 0, f: 1.5 },
   "放纵餐肉类": { unit: "g", kcal: 250, p: 20, c: 2, f: 18 },
   "放纵餐主食": { unit: "g", kcal: 160, p: 4, c: 32, f: 1 },
@@ -173,6 +173,7 @@ const state = {
   tab: "today",
   date: initialDate(),
   store: loadStore(),
+  centerDateOnRender: true,
 };
 
 function initialDate() {
@@ -191,14 +192,14 @@ function loadStore() {
       if (old) return normalizeStore({ version: 4, records: old, plans: {}, foods: FOOD_LIBRARY });
     } catch {}
   }
-  return normalizeStore({ version: 4, records: {}, plans: {}, foods: FOOD_LIBRARY });
+  return normalizeStore({ version: 6, records: {}, plans: {}, foods: FOOD_LIBRARY });
 }
 
 function normalizeStore(store) {
   const foods = { ...(store.foods || {}), ...FOOD_LIBRARY };
   const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods)]));
   return {
-    version: 5,
+    version: 6,
     records: store.records || {},
     plans,
     foods,
@@ -383,7 +384,7 @@ function pct(value, target) {
   return target ? Math.max(0, Math.min(100, (value / target) * 100)) : 0;
 }
 
-function render() {
+function render(options = {}) {
   renderWeekbar();
   renderDates();
   document.querySelectorAll(".tab").forEach((btn) => btn.classList.toggle("is-active", btn.dataset.tab === state.tab));
@@ -394,7 +395,10 @@ function render() {
   view.innerHTML = "";
   view.append(VIEWS[state.tab]());
   if (state.tab === "body") requestAnimationFrame(drawBodyChart);
-  requestAnimationFrame(centerActiveDate);
+  if (options.centerDate || state.centerDateOnRender) {
+    state.centerDateOnRender = false;
+    requestAnimationFrame(centerActiveDate);
+  }
 }
 
 function renderWeekbar() {
@@ -787,12 +791,12 @@ function drawSeries(ctx, points, key, color, min, max) {
 
 document.addEventListener("click", async (e) => {
   const dateBtn = e.target.closest("[data-date]");
-  if (dateBtn) { state.date = dateBtn.dataset.date; render(); return; }
+  if (dateBtn) { state.date = dateBtn.dataset.date; render({ centerDate: true }); return; }
   const tabBtn = e.target.closest("[data-tab]");
   if (tabBtn) { state.tab = tabBtn.dataset.tab; render(); return; }
-  if (e.target.closest("#prevWeek")) { state.date = addDays(state.date, -7); render(); return; }
-  if (e.target.closest("#nextWeek")) { state.date = addDays(state.date, 7); render(); return; }
-  if (e.target.closest("#weekLabel")) { state.date = initialDate(); render(); return; }
+  if (e.target.closest("#prevWeek")) { state.date = addDays(state.date, -7); render({ centerDate: true }); return; }
+  if (e.target.closest("#nextWeek")) { state.date = addDays(state.date, 7); render({ centerDate: true }); return; }
+  if (e.target.closest("#weekLabel")) { state.date = initialDate(); render({ centerDate: true }); return; }
   if (e.target.closest("#importBtn")) { document.getElementById("importFile").click(); return; }
   const chip = e.target.closest("[data-food-chip]");
   if (chip) {
