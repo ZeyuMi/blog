@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#174a4a" />
+    <title>减脂打卡</title>
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="stylesheet" href="./styles.css?v=3" />
+  </head>
+  <body>
+    <main id="app" class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="kicker">一周减脂记录</p>
+          <h1 id="pageTitle">今日</h1>
+        </div>
+        <div class="top-actions">
+          <button id="importBtn" class="icon-button" type="button" aria-label="导入Excel">
+            <span aria-hidden="true">↥</span>
+          </button>
+          <button id="exportBtn" class="icon-button" type="button" aria-label="导出Excel">
+            <span aria-hidden="true">↧</span>
+          </button>
+        </div>
+      </header>
+
+      <input id="importFile" type="file" accept=".xlsx,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/json" hidden />
+
+      <section class="weekbar" aria-label="选择周">
+        <button id="prevWeek" class="plain-button" type="button">‹ 上周</button>
+        <button id="weekLabel" class="week-label" type="button" aria-label="回到当前周"></button>
+        <button id="nextWeek" class="plain-button" type="button">下周 ›</button>
+      </section>
+
+      <section class="date-strip" aria-label="选择日期" id="dateStrip"></section>
+
+      <section id="view" class="view"></section>
+
+      <nav class="tabbar" aria-label="主导航">
+        <button class="tab is-active" data-tab="today" type="button">
+          <span class="tab-icon">⌂</span><span>今日</span>
+        </button>
+        <button class="tab" data-tab="training" type="button">
+          <span class="tab-icon">▣</span><span>训练</span>
+        </button>
+        <button class="tab" data-tab="meals" type="button">
+          <span class="tab-icon">≡</span><span>饮食</span>
+        </button>
+        <button class="tab" data-tab="water" type="button">
+          <span class="tab-icon">◌</span><span>饮水</span>
+        </button>
+        <button class="tab" data-tab="body" type="button">
+          <span class="tab-icon">⌁</span><span>身体</span>
+        </button>
+      </nav>
+    </main>
+
+    <template id="progressTemplate">
+      <div class="progress">
+        <span class="progress-fill"></span>
+      </div>
+    </template>
+
+    <script src="./app.js?v=3"></script>
+  </body>
+</html>
