@@ -35,11 +35,26 @@ const FOOD_LIBRARY = {
   "麦当劳薯角": { unit: "份", kcal: 280, p: 4, c: 38, f: 13, perUnit: true, note: "按中等份估算" },
   "麦当劳鸡米花": { unit: "份", kcal: 320, p: 17, c: 22, f: 19, perUnit: true, note: "按一份估算" },
   "阿根廷红虾": { unit: "g", kcal: 95, p: 20, c: 0, f: 1.5 },
+  "甜虾刺身": { unit: "g", kcal: 90, p: 20, c: 0, f: 1, note: "按刺身虾估算" },
+  "北极贝刺身": { unit: "g", kcal: 80, p: 14, c: 3, f: 1, note: "按贝类刺身估算" },
+  "紫薯土豆泥蔬菜沙拉": { unit: "g", kcal: 95, p: 3, c: 16, f: 2.5, note: "紫薯/土豆泥/玉米/豆类/蔬菜组合估算" },
+  "鸡丝大拌菜": { unit: "g", kcal: 115, p: 8, c: 9, f: 5, note: "按190g约219kcal估算" },
+  "鸡丝凉面": { unit: "g", kcal: 170, p: 7, c: 24, f: 5, note: "按370g约629kcal估算" },
+  "象大厨麻酱凉皮": { unit: "g", kcal: 190, p: 6, c: 25, f: 8, note: "麻酱类油脂较高，按400g约760kcal估算" },
+  "象大厨麻酱凉皮牛筋面双拼": { unit: "g", kcal: 200, p: 7, c: 26, f: 8, note: "按378g约756kcal估算" },
   "放纵餐肉类": { unit: "g", kcal: 250, p: 20, c: 2, f: 18 },
   "放纵餐主食": { unit: "g", kcal: 160, p: 4, c: 32, f: 1 },
   "放纵餐蔬菜": { unit: "g", kcal: 35, p: 1.5, c: 6, f: 0.5 },
   "放纵餐酱料/油脂": { unit: "g", kcal: 600, p: 3, c: 20, f: 55 },
   "甜品/小吃": { unit: "g", kcal: 300, p: 4, c: 40, f: 13 },
+};
+
+const MEAL_CHOICES = {
+  breakfast: [["盒马无糖无脂酸奶", 100], ["有机燕麦", 30], ["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30]],
+  lunch: [["盒马烤蔬牛肉三色糙米能量碗", 280], ["盒马即食炙烤鸡胸肉条", 120], ["鸡丝大拌菜", 190], ["鸡丝凉面", 370], ["紫薯土豆泥蔬菜沙拉", 300], ["卤牛肉", 150], ["卤牛肉", 300], ["象大厨麻酱凉皮", 400], ["象大厨麻酱凉皮牛筋面双拼", 378]],
+  snack: [["盒马无糖无脂酸奶", 100], ["有机燕麦", 25], ["盒马即食炙烤鸡胸肉条", 120], ["卤牛肉", 100], ["甜虾刺身", 60], ["北极贝刺身", 60], ["混合坚果", 6]],
+  dinner: [["盒马烤蔬牛肉三色糙米能量碗", 280], ["三文鱼", 100], ["卤牛肉", 150], ["甜虾刺身", 60], ["北极贝刺身", 60], ["紫薯土豆泥蔬菜沙拉", 300], ["鸡丝大拌菜", 190], ["鸡丝凉面", 370], ["象大厨麻酱凉皮", 400], ["象大厨麻酱凉皮牛筋面双拼", 378]],
+  indulgence: [["威士忌", 150], ["麦当劳薯角", 1], ["麦当劳鸡米花", 1], ["三文鱼", 200], ["阿根廷红虾", 150], ["甜虾刺身", 60], ["北极贝刺身", 60]],
 };
 
 const WEEK_TEMPLATE = [
@@ -651,9 +666,11 @@ function mealCard(meal, r) {
       </div>
     </div>
     ${estimateOpen ? estimateMealForm(meal) : ""}
+    ${mealChoicePanel(meal)}
     <div class="task-list">
       ${meal.items.map((item) => {
         const m = foodMacro(item);
+        const rememberChecked = item.custom ? "" : "checked";
         return `<div class="food-task ${r.foods[item.id] ? "done" : "todo"}">
           <button class="food-check" data-check="food:${item.id}" type="button"><span class="task-dot"></span></button>
           <div class="food-main"><b>${item.food || item.name}</b><small>${item.amount}${item.unit || ""} · ${fmt(m.kcal)} kcal · P${fmt(m.p, 1)} C${fmt(m.c, 1)} F${fmt(m.f, 1)}</small></div>
@@ -674,6 +691,7 @@ function mealCard(meal, r) {
               ${field("p", "蛋白 g", fmt(m.p, 1), "25")}
               ${field("c", "碳水 g", fmt(m.c, 1), "40")}
               ${field("f", "脂肪 g", fmt(m.f, 1), "10")}
+              <label class="switch-row span-2"><input name="rememberFood" type="checkbox" ${rememberChecked} /> 同步到食物库，以后都用这组数据</label>
               <button class="primary-button" type="submit">保存</button>
             </form>
           </details>
@@ -681,6 +699,36 @@ function mealCard(meal, r) {
       }).join("")}
     </div>
   </section>`;
+}
+
+function mealChoicePanel(meal) {
+  const choices = mealChoices(meal);
+  if (!choices.length) return "";
+  return `<details class="choice-panel" data-choice-panel="${meal.id}">
+    <summary>可选食物</summary>
+    <div class="choice-list">
+      ${choices.map(([food, amount]) => choiceRow(meal, food, amount)).join("")}
+    </div>
+  </details>`;
+}
+
+function mealChoices(meal) {
+  if (meal.name.includes("早餐")) return MEAL_CHOICES.breakfast;
+  if (meal.name.includes("午餐")) return MEAL_CHOICES.lunch;
+  if (meal.name.includes("加餐")) return MEAL_CHOICES.snack;
+  if (meal.name.includes("放纵")) return MEAL_CHOICES.indulgence;
+  if (meal.name.includes("晚餐")) return MEAL_CHOICES.dinner;
+  return [];
+}
+
+function choiceRow(meal, food, amount) {
+  const lib = state.store.foods[food] || FOOD_LIBRARY[food];
+  const unit = lib?.unit || "g";
+  const macro = scaleMacro(lib, amount);
+  return `<div class="choice-row">
+    <div><b>${esc(food)}</b><small>${amount}${unit} · ${fmt(macro.kcal)} kcal · P${fmt(macro.p, 1)} C${fmt(macro.c, 1)} F${fmt(macro.f, 1)}</small></div>
+    <button data-choice-meal="${meal.id}" data-choice-food="${esc(food)}" data-choice-amount="${amount}" type="button">加入</button>
+  </div>`;
 }
 
 function estimateMealForm(meal) {
@@ -909,6 +957,23 @@ document.addEventListener("click", async (e) => {
     renderPreservingScroll();
     return;
   }
+  const choiceBtn = e.target.closest("[data-choice-food]");
+  if (choiceBtn) {
+    const p = editablePlan();
+    const meal = p.meals.find((m) => m.id === choiceBtn.dataset.choiceMeal);
+    const food = choiceBtn.dataset.choiceFood;
+    if (meal && food) {
+      meal.items.push({
+        id: uid("food"),
+        food,
+        amount: Number(choiceBtn.dataset.choiceAmount || 0),
+        unit: state.store.foods[food]?.unit || FOOD_LIBRARY[food]?.unit || "g",
+      });
+      saveStore();
+      renderPreservingScroll();
+    }
+    return;
+  }
   if (e.target.closest("[data-estimate-close]")) {
     state.estimateMealId = "";
     renderPreservingScroll();
@@ -1012,15 +1077,34 @@ document.addEventListener("submit", (e) => {
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
     const item = meal?.items.find((x) => x.id === data.get("itemId"));
     if (item) {
-      item.custom = true;
-      item.food = data.get("name") || item.food || "自定义食物";
-      item.name = item.food;
-      item.amount = Number(data.get("amount") || 0);
-      item.unit = data.get("unit") || "g";
-      item.kcal = Number(data.get("kcal") || 0);
-      item.p = Number(data.get("p") || 0);
-      item.c = Number(data.get("c") || 0);
-      item.f = Number(data.get("f") || 0);
+      const name = String(data.get("name") || item.food || "自定义食物").trim();
+      const amount = Number(data.get("amount") || 0);
+      const unit = String(data.get("unit") || "g").trim() || "g";
+      const macro = { kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0) };
+      if (data.get("rememberFood") === "on") {
+        const perUnit = ["份", "个", "颗"].includes(unit);
+        const factor = perUnit ? Math.max(1, amount || 1) : Math.max(0.01, amount / 100);
+        state.store.foods[name] = {
+          unit,
+          kcal: rnd(macro.kcal / factor),
+          p: rnd(macro.p / factor),
+          c: rnd(macro.c / factor),
+          f: rnd(macro.f / factor),
+          perUnit,
+        };
+        item.custom = false;
+        delete item.kcal; delete item.p; delete item.c; delete item.f;
+      } else {
+        item.custom = true;
+        item.kcal = macro.kcal;
+        item.p = macro.p;
+        item.c = macro.c;
+        item.f = macro.f;
+      }
+      item.food = name;
+      item.name = name;
+      item.amount = amount;
+      item.unit = unit;
     }
   }
   if (e.target.classList.contains("editExerciseForm")) {
