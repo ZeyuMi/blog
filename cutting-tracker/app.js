@@ -3,6 +3,7 @@ const BACKUP_STORE_KEY = "cuttingTracker.backup.v9";
 const LEGACY_STORE_KEYS = ["cuttingTracker.v8", "cuttingTracker.v7", "cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
 const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 72, dailyActivityFactor: 1.34 };
+const CALORIE_RULES = { normalDeficit: 500, saturdayOver: 1000 };
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -560,12 +561,21 @@ function dailyTdee(p = plan(), date = state.date) {
   return baseBurn(date) + dynamicExerciseTotal(p, date);
 }
 
+function targetDeficitGoal(date = state.date) {
+  return templateIndex(date) === 5 ? -CALORIE_RULES.saturdayOver : CALORIE_RULES.normalDeficit;
+}
+
 function calorieTarget(p = plan(), date = state.date) {
-  return plannedTotals(p).kcal;
+  return dailyTdee(p, date) - targetDeficitGoal(date);
 }
 
 function targetDeficit(p = plan(), date = state.date) {
-  return dailyTdee(p, date) - calorieTarget(p, date);
+  return targetDeficitGoal(date);
+}
+
+function nutritionTargets(p = plan(), date = state.date) {
+  const planned = plannedTotals(p);
+  return { ...planned, kcal: calorieTarget(p, date) };
 }
 
 function plan(date = state.date) {
@@ -642,13 +652,13 @@ function weekStats() {
   return weekDates().reduce((acc, date) => {
     const p = plan(date);
     const r = readRecord(date);
-    const planned = plannedTotals(p);
+    const planned = nutritionTargets(p, date);
     const eaten = eatenTotals(p, r);
     acc.plannedKcal += planned.kcal;
     acc.eatenKcal += eaten.kcal;
     const burn = dailyTdee(p, date);
     acc.burn += burn;
-    acc.plannedDeficit += burn - planned.kcal;
+    acc.plannedDeficit += targetDeficit(p, date);
     acc.actualDeficit += burn - eaten.kcal;
     acc.water += r.waterMl || 0;
     acc.waterTarget += p.waterTarget;
@@ -726,16 +736,17 @@ const VIEWS = {
   today() {
     const p = plan();
     const r = readRecord();
-    const planned = plannedTotals(p);
+    const planned = nutritionTargets(p);
     const eaten = eatenTotals(p, r);
     const week = weekStats();
     const burn = dailyTdee(p);
-    const plannedDeficit = burn - planned.kcal;
+    const plannedDeficit = targetDeficit(p);
     const actualDeficit = burn - eaten.kcal;
     const targetRemainingKcal = planned.kcal - eaten.kcal;
     const base = baseBurn();
     const exercise = dynamicExerciseTotal(p);
     const weight = bodyWeightForDate();
+    const calorieRuleLabel = plannedDeficit < 0 ? `周六超标 ${fmt(Math.abs(plannedDeficit))} kcal` : `目标缺口 ${fmt(plannedDeficit)} kcal`;
     const foodItems = p.meals.flatMap((m) => m.items);
     const foodDone = foodItems.filter((item) => r.foods[item.id]).length;
     const exerciseDone = p.exercises.filter((ex) => r.exercises[ex.id]).length;
@@ -756,7 +767,7 @@ const VIEWS = {
         <div class="score-main ${targetRemainingKcal >= 0 ? "good" : "bad"}">
           <span>目标剩余可吃</span>
           <strong>${fmt(targetRemainingKcal)}</strong>
-          <small>TDEE ${fmt(burn)} kcal · 目标缺口 ${fmt(plannedDeficit)} kcal</small>
+          <small>TDEE ${fmt(burn)} kcal · ${calorieRuleLabel}</small>
         </div>
         <div class="score-side">
           <b>${fmt(eaten.kcal)}</b><span>已吃 / 目标 ${fmt(planned.kcal)}</span>
@@ -1302,46 +1313,123 @@ function drawBodyChart() {
   const canvas = document.getElementById("bodyChart");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  const dates = weekDates();
-  const points = dates.map((date, i) => ({ i, date, weight: Number(readRecord(date).body?.weight || 0), bodyFat: Number(readRecord(date).body?.bodyFat || 0) }));
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#fffdfa";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = "#ded8cc";
-  for (let i = 0; i < 5; i++) {
-    const y = 35 + i * 48;
-    ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(615, y); ctx.stroke();
-  }
-  drawSeries(ctx, points, "weight", "#245b4f", 65, 75);
-  drawSeries(ctx, points, "bodyFat", "#c77b22", 14, 24);
-  ctx.font = "19px -apple-system, sans-serif";
-  ctx.fillStyle = "#59666d";
-  dates.forEach((d, i) => ctx.fillText(dayName(d).replace("周", ""), 52 + i * 82, 282));
-}
+  const width = canvas.width;
+  const height = canvas.height;
+  const dates = Array.from({ length: 30 }, (_, i) => addDays(state.date, i - 29));
+  const points = dates.map((date, i) => ({
+    i,
+    date,
+    weight: Number(readRecord(date).body?.weight || 0),
+    bodyFat: Number(readRecord(date).body?.bodyFat || 0),
+  }));
+  const weightPoints = points.filter((p) => p.weight > 0);
+  const fatPoints = points.filter((p) => p.bodyFat > 0);
+  const plot = { left: 54, right: width - 34, top: 62, bottom: height - 42 };
 
-function drawSeries(ctx, points, key, color, min, max) {
-  const valid = points.filter((p) => p[key]);
-  if (!valid.length) {
-    ctx.fillStyle = "#6f7579";
-    ctx.font = "22px -apple-system, sans-serif";
-    ctx.fillText("保存身体记录后显示趋势", 190, 150);
+  ctx.clearRect(0, 0, width, height);
+  const bg = ctx.createLinearGradient(0, 0, 0, height);
+  bg.addColorStop(0, "#ffffff");
+  bg.addColorStop(1, "#f3f8f9");
+  ctx.fillStyle = bg;
+  roundedRect(ctx, 0, 0, width, height, 18);
+  ctx.fill();
+
+  ctx.fillStyle = "#172229";
+  ctx.font = "700 22px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText("最近30天趋势", 22, 32);
+  drawLegend(ctx, 410, 21, "#16935f", "体重 kg");
+  drawLegend(ctx, 510, 21, "#2878a8", "体脂 %");
+
+  if (!weightPoints.length && !fatPoints.length) {
+    ctx.fillStyle = "#667681";
+    ctx.font = "600 18px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText("保存体重或体脂后显示趋势", 198, 162);
     return;
   }
+
+  drawGrid(ctx, plot);
+  drawBodySeries(ctx, points, "weight", "#16935f", plot);
+  drawBodySeries(ctx, points, "bodyFat", "#2878a8", plot);
+
+  ctx.fillStyle = "#667681";
+  ctx.font = "600 12px -apple-system, BlinkMacSystemFont, sans-serif";
+  [0, 7, 14, 21, 29].forEach((idx) => {
+    const x = xForIndex(idx, points.length, plot);
+    ctx.fillText(points[idx].date.slice(5), x - 15, height - 18);
+  });
+}
+
+function drawGrid(ctx, plot) {
+  ctx.strokeStyle = "#dfe8eb";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = plot.top + ((plot.bottom - plot.top) * i) / 4;
+    ctx.beginPath();
+    ctx.moveTo(plot.left, y);
+    ctx.lineTo(plot.right, y);
+    ctx.stroke();
+  }
+}
+
+function drawBodySeries(ctx, points, key, color, plot) {
+  const valid = points.filter((p) => p[key] > 0);
+  if (!valid.length) return;
+  const values = valid.map((p) => p[key]);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = Math.max((max - min) * 0.18, key === "weight" ? 1 : 0.5);
+  const lo = min - pad;
+  const hi = max + pad;
   ctx.strokeStyle = color;
-  ctx.fillStyle = color;
   ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   ctx.beginPath();
   valid.forEach((p, idx) => {
-    const x = 55 + p.i * 82;
-    const y = 250 - ((p[key] - min) / (max - min)) * 205;
+    const x = xForIndex(p.i, points.length, plot);
+    const y = plot.bottom - ((p[key] - lo) / Math.max(0.01, hi - lo)) * (plot.bottom - plot.top);
     if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.stroke();
+
   valid.forEach((p) => {
-    const x = 55 + p.i * 82;
-    const y = 250 - ((p[key] - min) / (max - min)) * 205;
-    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+    const x = xForIndex(p.i, points.length, plot);
+    const y = plot.bottom - ((p[key] - lo) / Math.max(0.01, hi - lo)) * (plot.bottom - plot.top);
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
   });
+
+  const last = valid[valid.length - 1];
+  const lx = xForIndex(last.i, points.length, plot);
+  const ly = plot.bottom - ((last[key] - lo) / Math.max(0.01, hi - lo)) * (plot.bottom - plot.top);
+  ctx.fillStyle = color;
+  ctx.font = "800 13px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(`${fmt(last[key], 1)}${key === "weight" ? "kg" : "%"}`, Math.min(lx + 8, plot.right - 50), ly - 8);
+}
+
+function xForIndex(i, total, plot) {
+  return plot.left + (i / Math.max(1, total - 1)) * (plot.right - plot.left);
+}
+
+function drawLegend(ctx, x, y, color, label) {
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y - 4, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#667681";
+  ctx.font = "700 12px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.fillText(label, x + 10, y);
+}
+
+function roundedRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 document.addEventListener("click", async (e) => {
@@ -1858,10 +1946,10 @@ function exportRows() {
   for (const date of dates) {
     const p = plan(date);
     const r = readRecord(date);
-    const planned = plannedTotals(p);
+    const planned = nutritionTargets(p, date);
     const eaten = eatenTotals(p, r);
     const burn = dailyTdee(p, date);
-    summary.push([date, p.day, p.title, rnd(planned.kcal), rnd(eaten.kcal), burn, rnd(burn - planned.kcal), rnd(burn - eaten.kcal), r.waterMl || 0, p.waterTarget, r.stool?.done ? "是" : "否", r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || ""]);
+    summary.push([date, p.day, p.title, rnd(planned.kcal), rnd(eaten.kcal), burn, rnd(targetDeficit(p, date)), rnd(burn - eaten.kcal), r.waterMl || 0, p.waterTarget, r.stool?.done ? "是" : "否", r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || ""]);
     p.meals.forEach((m) => m.items.forEach((item) => {
       const macro = foodMacro(item);
       foodRows.push([date, m.name, item.food || item.name, item.amount, item.unit || "", rnd(macro.kcal), rnd(macro.p), rnd(macro.c), rnd(macro.f), r.foods[item.id] ? "是" : "否"]);

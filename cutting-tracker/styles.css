@@ -807,7 +807,13 @@ h1 { font-size: 27px; line-height: 1.08; }
 .quick-water:nth-child(3) { background: var(--amber); }
 .quick-water.danger { background: var(--red); }
 
-.chart-wrap { height: 190px; }
+.chart-wrap {
+  height: 260px;
+  overflow: hidden;
+  border: 1px solid #dbe6ea;
+  border-radius: 8px;
+  background: #f7fafb;
+}
 
 canvas {
   display: block;
