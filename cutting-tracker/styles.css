@@ -570,7 +570,7 @@ h1 { font-size: 27px; line-height: 1.08; }
 .choice-search {
   display: grid;
   gap: 6px;
-  padding: 0 10px 10px;
+  padding: 0 10px 6px;
 }
 
 .choice-search span {
@@ -586,6 +586,12 @@ h1 { font-size: 27px; line-height: 1.08; }
   background: #fff;
   color: var(--ink);
   padding: 0 10px;
+}
+
+.choice-search-meta {
+  padding: 0 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .choice-list {
@@ -605,6 +611,10 @@ h1 { font-size: 27px; line-height: 1.08; }
   border: 1px solid #e2ebef;
   border-radius: 8px;
   background: #fff;
+}
+
+.choice-row.is-hidden {
+  display: none;
 }
 
 .choice-row b,
