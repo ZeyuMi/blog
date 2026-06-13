@@ -567,9 +567,32 @@ h1 { font-size: 27px; line-height: 1.08; }
   cursor: pointer;
 }
 
+.choice-search {
+  display: grid;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.choice-search span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.choice-search input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 0 10px;
+}
+
 .choice-list {
   display: grid;
   gap: 8px;
+  max-height: 360px;
+  overflow: auto;
   padding: 0 10px 10px;
 }
 
