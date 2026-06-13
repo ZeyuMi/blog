@@ -1,5 +1,5 @@
-const STORE_KEY = "cuttingTracker.v3";
-const LEGACY_STORE_KEYS = ["cuttingTracker.v2", "cuttingTracker.v1"];
+const STORE_KEY = "cuttingTracker.v4";
+const LEGACY_STORE_KEYS = ["cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
 
 const FOOD_LIBRARY = {
@@ -183,16 +183,16 @@ function loadStore() {
   for (const key of LEGACY_STORE_KEYS) {
     try {
       const old = JSON.parse(localStorage.getItem(key));
-      if (old?.version >= 2) return normalizeStore({ ...old, plans: {}, foods: FOOD_LIBRARY });
-      if (old) return normalizeStore({ version: 3, records: old, plans: {}, foods: FOOD_LIBRARY });
+      if (old?.version >= 2) return normalizeStore(old);
+      if (old) return normalizeStore({ version: 4, records: old, plans: {}, foods: FOOD_LIBRARY });
     } catch {}
   }
-  return normalizeStore({ version: 3, records: {}, plans: {}, foods: FOOD_LIBRARY });
+  return normalizeStore({ version: 4, records: {}, plans: {}, foods: FOOD_LIBRARY });
 }
 
 function normalizeStore(store) {
   return {
-    version: 3,
+    version: 4,
     records: store.records || {},
     plans: store.plans || {},
     foods: { ...FOOD_LIBRARY, ...(store.foods || {}) },
@@ -291,6 +291,12 @@ function foodMacro(item) {
 
 function pickMacro(x) {
   return { kcal: Number(x.kcal || 0), p: Number(x.p || 0), c: Number(x.c || 0), f: Number(x.f || 0) };
+}
+
+function scaleMacro(food, amount) {
+  if (!food) return { kcal: 0, p: 0, c: 0, f: 0 };
+  const k = food.perUnit ? Number(amount || 0) : Number(amount || 0) / 100;
+  return { kcal: Number(food.kcal || 0) * k, p: Number(food.p || 0) * k, c: Number(food.c || 0) * k, f: Number(food.f || 0) * k };
 }
 
 function sumMacros(items) {
@@ -470,7 +476,7 @@ const VIEWS = {
     return html(`<div class="stack">
       ${p.meals.map((meal) => mealCard(meal, r)).join("")}
       ${addFoodPanel(p)}
-      ${customFoodPanel(p)}
+      ${foodLibraryPanel()}
     </div>`);
   },
 
@@ -625,33 +631,56 @@ function mealCard(meal, r) {
 }
 
 function addFoodPanel(p) {
-  const foodOptions = Object.keys(state.store.foods).sort((a, b) => a.localeCompare(b, "zh-CN")).map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
+  const names = foodNames();
+  const foodOptions = names.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
   const mealOptions = p.meals.map((m) => `<option value="${m.id}">${m.name}</option>`).join("");
-  return `<section class="panel">
-    <div class="section-title"><h2>临时加/替换食物</h2><small>改动只影响这一天</small></div>
-    <form id="addFoodForm" class="form-grid">
-      <label class="field"><span>餐次</span><select name="mealId">${mealOptions}</select></label>
-      <label class="field"><span>食物</span><select name="food">${foodOptions}</select></label>
-      ${field("amount", "数量", "", "如 150 或坚果 10")}
-      <button class="primary-button" type="submit">加入餐次</button>
+  const chips = names.slice(0, 10).map((name) => `<button class="food-chip" data-food-chip="${esc(name)}" type="button">${esc(name)}</button>`).join("");
+  return `<section class="panel food-entry-panel">
+    <div class="section-title"><h2>记录食物</h2><small>新食物录一次，以后直接搜</small></div>
+    <form id="addFoodForm" class="food-entry-form">
+      <div class="form-grid">
+        <label class="field"><span>餐次</span><select name="mealId">${mealOptions}</select></label>
+        <label class="field"><span>食物名</span><input name="food" list="foodLibraryList" placeholder="输入或搜索食物" autocomplete="off" /></label>
+        ${field("amount", "本次数量", "", "如 150")}
+        <label class="field"><span>单位</span><input name="unit" value="g" placeholder="g/ml/个/颗/份" /></label>
+        <label class="field span-2"><span>计算方式</span><select name="mode">
+          <option value="per100">按每100g/ml计算</option>
+          <option value="perUnit">按每个/颗/份计算</option>
+        </select></label>
+      </div>
+      <datalist id="foodLibraryList">${foodOptions}</datalist>
+      <details class="nutrition-details">
+        <summary>第一次录入或修正营养</summary>
+        <div class="form-grid nutrition-grid">
+          ${field("kcal", "热量", "", "每100g或每单位")}
+          ${field("p", "蛋白质 g", "", "每100g或每单位")}
+          ${field("c", "碳水 g", "", "每100g或每单位")}
+          ${field("f", "脂肪 g", "", "每100g或每单位")}
+        </div>
+      </details>
+      <div class="food-preview" id="foodPreview">输入食物和重量后自动计算</div>
+      <div class="chip-row">${chips}</div>
+      <button class="primary-button full-button" type="submit">加入这顿饭</button>
     </form>
   </section>`;
 }
 
-function customFoodPanel(p) {
-  const mealOptions = p.meals.map((m) => `<option value="${m.id}">${m.name}</option>`).join("");
+function foodLibraryPanel() {
+  const custom = foodNames().filter((name) => !FOOD_LIBRARY[name]).slice(0, 12);
+  const rows = custom.length
+    ? custom.map((name) => {
+        const f = state.store.foods[name];
+        return `<div class="library-row"><b>${esc(name)}</b><small>${f.perUnit ? "每单位" : "每100g"} · ${fmt(f.kcal)} kcal · P${fmt(f.p, 1)} C${fmt(f.c, 1)} F${fmt(f.f, 1)}</small></div>`;
+      }).join("")
+    : `<p class="empty compact">你第一次录入的新食物会出现在这里。</p>`;
   return `<section class="panel soft">
-    <div class="section-title"><h2>自定义食物</h2><small>按这一份总量填写</small></div>
-    <form id="customFoodForm" class="form-grid">
-      <label class="field"><span>餐次</span><select name="mealId">${mealOptions}</select></label>
-      ${field("name", "名称", "", "汤粉/米线/外卖")}
-      ${field("kcal", "热量 kcal", "", "500")}
-      ${field("p", "蛋白 g", "", "25")}
-      ${field("c", "碳水 g", "", "70")}
-      ${field("f", "脂肪 g", "", "15")}
-      <button class="primary-button span-2" type="submit">添加自定义</button>
-    </form>
+    <div class="section-title"><h2>我的食物库</h2><small>${Object.keys(state.store.foods).length} 个食物</small></div>
+    <div class="library-list">${rows}</div>
   </section>`;
+}
+
+function foodNames() {
+  return Object.keys(state.store.foods).sort((a, b) => a.localeCompare(b, "zh-CN"));
 }
 
 function field(name, label, value, placeholder, extra = "") {
@@ -728,6 +757,15 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("#nextWeek")) { state.date = addDays(state.date, 7); render(); return; }
   if (e.target.closest("#weekLabel")) { state.date = initialDate(); render(); return; }
   if (e.target.closest("#importBtn")) { document.getElementById("importFile").click(); return; }
+  const chip = e.target.closest("[data-food-chip]");
+  if (chip) {
+    const form = document.getElementById("addFoodForm");
+    if (form) {
+      form.elements.food.value = chip.dataset.foodChip;
+      syncFoodForm(form, true);
+    }
+    return;
+  }
   const check = e.target.closest("[data-check]");
   if (check) {
     const r = record();
@@ -773,9 +811,21 @@ document.addEventListener("submit", (e) => {
   }
   if (e.target.id === "addFoodForm") {
     const p = editablePlan();
-    const food = data.get("food");
+    const food = String(data.get("food") || "").trim();
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
-    if (meal && food) meal.items.push({ id: uid("food"), food, amount: Number(data.get("amount") || 0), unit: state.store.foods[food]?.unit || "g" });
+    const amount = Number(data.get("amount") || 0);
+    const manual = ["kcal", "p", "c", "f"].some((key) => String(data.get(key) || "").trim() !== "");
+    if (meal && food) {
+      if (!state.store.foods[food] || manual) {
+        const nextFood = foodFromForm(data);
+        if (!nextFood) {
+          alert("这个食物还没在食物库里。请先展开“第一次录入或修正营养”，填每100g或每单位的营养。");
+          return;
+        }
+        state.store.foods[food] = nextFood;
+      }
+      meal.items.push({ id: uid("food"), food, amount, unit: state.store.foods[food]?.unit || data.get("unit") || "g" });
+    }
   }
   if (e.target.id === "customFoodForm") {
     const p = editablePlan();
@@ -819,6 +869,62 @@ document.addEventListener("submit", (e) => {
   saveStore();
   render();
 });
+
+document.addEventListener("input", (e) => {
+  const form = e.target.closest("#addFoodForm");
+  if (!form) return;
+  syncFoodForm(form, e.target.name === "food");
+});
+
+document.addEventListener("change", (e) => {
+  const form = e.target.closest("#addFoodForm");
+  if (!form) return;
+  syncFoodForm(form, e.target.name === "food");
+});
+
+function foodFromForm(data) {
+  const unit = String(data.get("unit") || "g").trim() || "g";
+  const values = {
+    unit,
+    kcal: Number(data.get("kcal") || 0),
+    p: Number(data.get("p") || 0),
+    c: Number(data.get("c") || 0),
+    f: Number(data.get("f") || 0),
+    perUnit: data.get("mode") === "perUnit",
+  };
+  if (![values.kcal, values.p, values.c, values.f].some((n) => Number.isFinite(n) && n > 0)) return null;
+  return values;
+}
+
+function syncFoodForm(form, fillFromLibrary = false) {
+  const foodName = String(form.elements.food?.value || "").trim();
+  const saved = state.store.foods[foodName];
+  if (saved && fillFromLibrary) {
+    form.elements.unit.value = saved.unit || "g";
+    form.elements.mode.value = saved.perUnit ? "perUnit" : "per100";
+    form.elements.kcal.value = saved.kcal ?? "";
+    form.elements.p.value = saved.p ?? "";
+    form.elements.c.value = saved.c ?? "";
+    form.elements.f.value = saved.f ?? "";
+  }
+  const candidate = foodFromForm(new FormData(form)) || saved;
+  const amount = Number(form.elements.amount?.value || 0);
+  const preview = document.getElementById("foodPreview");
+  if (!preview) return;
+  if (!foodName) {
+    preview.textContent = "输入食物和重量后自动计算";
+    preview.className = "food-preview";
+    return;
+  }
+  if (!candidate) {
+    preview.textContent = "新食物：展开营养区，按包装或食物库填一次营养，以后会自动记住";
+    preview.className = "food-preview warn";
+    return;
+  }
+  const macro = scaleMacro(candidate, amount);
+  preview.textContent = `${amount || 0}${candidate.unit || ""} ≈ ${fmt(macro.kcal)} kcal · 蛋白 ${fmt(macro.p, 1)}g · 碳水 ${fmt(macro.c, 1)}g · 脂肪 ${fmt(macro.f, 1)}g`;
+  preview.className = saved ? "food-preview ok" : "food-preview";
+}
 
 document.getElementById("exportBtn").addEventListener("click", async () => {
   const blob = await buildXlsx(exportRows(), JSON.stringify(state.store));
