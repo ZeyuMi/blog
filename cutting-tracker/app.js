@@ -675,12 +675,13 @@ function exerciseRow(ex, done) {
 }
 
 function mealCard(meal, r) {
-  const total = sumMacros(meal.items);
+  const listed = sumMacros(meal.items);
+  const eaten = sumMacros(meal.items.filter((item) => r.foods[item.id]));
   const done = meal.items.filter((item) => r.foods[item.id]).length;
   const estimateOpen = state.estimateMealId === meal.id;
   return `<section class="meal-card">
     <div class="meal-head">
-      <div><h3>${meal.name}</h3><small>${fmt(total.kcal)} kcal · P ${fmt(total.p, 1)} / C ${fmt(total.c, 1)} / F ${fmt(total.f, 1)}</small></div>
+      <div><h3>${meal.name}</h3><small>已吃 ${fmt(eaten.kcal)} kcal · P ${fmt(eaten.p, 1)} / C ${fmt(eaten.c, 1)} / F ${fmt(eaten.f, 1)} · 已列 ${fmt(listed.kcal)} kcal</small></div>
       <div class="meal-actions">
         <button class="estimate-button ${estimateOpen ? "is-active" : ""}" data-estimate-meal="${meal.id}" type="button">+ 估算餐</button>
         <span class="badge ${done === meal.items.length ? "ok" : "warn"}">${done}/${meal.items.length}</span>
