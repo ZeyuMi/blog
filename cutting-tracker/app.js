@@ -1,7 +1,6 @@
 const STORE_KEY = "cuttingTracker.v3";
 const LEGACY_STORE_KEYS = ["cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
-const WEEK_START = "2026-06-15";
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -173,8 +172,7 @@ const state = {
 };
 
 function initialDate() {
-  const today = isoDate(new Date());
-  return today < WEEK_START ? WEEK_START : today;
+  return isoDate(new Date());
 }
 
 function loadStore() {
