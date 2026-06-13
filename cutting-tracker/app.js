@@ -1,5 +1,6 @@
-const STORE_KEY = "cuttingTracker.v8";
-const LEGACY_STORE_KEYS = ["cuttingTracker.v7", "cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
+const STORE_KEY = "cuttingTracker.v9";
+const BACKUP_STORE_KEY = "cuttingTracker.backup.v9";
+const LEGACY_STORE_KEYS = ["cuttingTracker.v8", "cuttingTracker.v7", "cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
 
 const FOOD_LIBRARY = {
@@ -183,6 +184,8 @@ const WEEK_TEMPLATE = [
   },
 ];
 
+const EXERCISE_LIBRARY = buildExerciseLibrary(WEEK_TEMPLATE);
+
 const WATER_SLOTS = {
   trainCardio: [["起床后", 400], ["训练前", 300], ["训练中", 600], ["午餐前后", 600], ["下午", 700], ["晚餐后", 500]],
   train: [["起床后", 400], ["训练前", 300], ["训练中", 400], ["午餐前后", 600], ["下午", 700], ["晚餐后", 400]],
@@ -217,6 +220,10 @@ function loadStore() {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY));
     if (saved?.version >= 2) return normalizeStore(saved);
   } catch {}
+  try {
+    const backup = JSON.parse(localStorage.getItem(BACKUP_STORE_KEY));
+    if (backup?.version >= 2) return normalizeStore(backup);
+  } catch {}
   for (const key of LEGACY_STORE_KEYS) {
     try {
       const old = JSON.parse(localStorage.getItem(key));
@@ -224,26 +231,32 @@ function loadStore() {
       if (old) return normalizeStore({ version: 4, records: old, plans: {}, foods: FOOD_LIBRARY });
     } catch {}
   }
-  return normalizeStore({ version: 8, records: {}, plans: {}, foods: FOOD_LIBRARY, deletedFoods: [] });
+  return normalizeStore({ version: 9, records: {}, plans: {}, foods: FOOD_LIBRARY, deletedFoods: [], exerciseLibrary: EXERCISE_LIBRARY, deletedExercises: [] });
 }
 
 function normalizeStore(store) {
   const deletedFoods = Array.isArray(store.deletedFoods) ? store.deletedFoods : [];
   const foods = { ...FOOD_LIBRARY, ...(store.foods || {}) };
   deletedFoods.forEach((name) => delete foods[name]);
-  const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods)]));
+  const deletedExercises = Array.isArray(store.deletedExercises) ? store.deletedExercises : [];
+  const exerciseLibrary = { ...EXERCISE_LIBRARY, ...(store.exerciseLibrary || {}) };
+  deletedExercises.forEach((name) => delete exerciseLibrary[name]);
+  const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary)]));
   return {
-    version: 8,
+    version: 9,
     records: store.records || {},
     plans,
     foods,
     deletedFoods,
+    exerciseLibrary,
+    deletedExercises,
   };
 }
 
-function normalizeSavedPlan(date, savedPlan, foods) {
+function normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary) {
   if (!savedPlan?.meals) return savedPlan;
   const p = JSON.parse(JSON.stringify(savedPlan));
+  p.exercises = (p.exercises || []).map((ex, i) => normalizeExercise(ex, i, exerciseLibrary));
   p.meals.forEach((meal) => {
     meal.items = (meal.items || []).map((item) => {
       const next = item.food === "超级碗沙拉半份"
@@ -274,7 +287,40 @@ function templateMealItems(date, mealName, foods, mealIndex) {
 }
 
 function saveStore() {
-  localStorage.setItem(STORE_KEY, JSON.stringify(state.store));
+  const compact = compactStore(state.store);
+  try {
+    const previous = localStorage.getItem(STORE_KEY);
+    if (previous) localStorage.setItem(BACKUP_STORE_KEY, previous);
+    localStorage.setItem(STORE_KEY, JSON.stringify(compact));
+    state.store = normalizeStore(compact);
+  } catch (err) {
+    alert("保存失败：本机浏览器存储空间可能已满。请先导出Excel备份，再清理旧浏览器数据。");
+    throw err;
+  }
+}
+
+function compactStore(store) {
+  const records = Object.fromEntries(Object.entries(store.records || {}).filter(([, r]) => hasRecordData(r)));
+  return { ...store, version: 9, records };
+}
+
+function hasRecordData(r = {}) {
+  return Boolean(
+    Object.values(r.foods || {}).some(Boolean) ||
+    Object.values(r.exercises || {}).some(Boolean) ||
+    Object.values(r.waterSlots || {}).some(Boolean) ||
+    Number(r.waterMl || 0) > 0 ||
+    Object.values(r.body || {}).some((v) => String(v || "").trim()) ||
+    r.stool?.done || r.stool?.time || r.stool?.shape || r.stool?.note
+  );
+}
+
+function emptyRecord() {
+  return { foods: {}, exercises: {}, waterSlots: {}, waterMl: 0, body: {}, stool: {} };
+}
+
+function readRecord(date = state.date) {
+  return state.store.records[date] || emptyRecord();
 }
 
 function foodDef(name) {
@@ -327,6 +373,103 @@ function deleteFoodFromLibrary(name) {
   }
 }
 
+function buildExerciseLibrary(templates) {
+  const map = {};
+  templates.forEach((day) => {
+    (day.exercises || []).forEach((raw, i) => {
+      const ex = normalizeExercise(raw, i, {});
+      if (!ex.name || ex.name === "休息") return;
+      map[ex.name] = {
+        kcalPerSet: ex.kcalPerSet,
+        detail: ex.detail || "",
+        note: ex.detail || "",
+      };
+    });
+  });
+  return map;
+}
+
+function exerciseDef(name) {
+  return state.store.exerciseLibrary?.[name] || null;
+}
+
+function upsertExerciseDef(name, ex) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return false;
+  state.store.deletedExercises = (state.store.deletedExercises || []).filter((item) => item !== cleanName);
+  state.store.exerciseLibrary[cleanName] = {
+    kcalPerSet: Number(ex.kcalPerSet || 0),
+    detail: String(ex.detail || ""),
+    note: String(ex.note || ""),
+  };
+  return true;
+}
+
+function deleteExerciseDef(name) {
+  delete state.store.exerciseLibrary[name];
+  if (EXERCISE_LIBRARY[name]) {
+    const deleted = new Set(state.store.deletedExercises || []);
+    deleted.add(name);
+    state.store.deletedExercises = [...deleted];
+  }
+}
+
+function normalizeExercise(raw, index = 0, library = EXERCISE_LIBRARY) {
+  if (Array.isArray(raw)) {
+    const [name, detail, kcal] = raw;
+    const sets = inferSets(detail, name);
+    const cleanDetail = cleanExerciseDetail(detail, sets);
+    const perSet = sets > 0 ? Number(kcal || 0) / sets : Number(kcal || 0);
+    return {
+      id: `ex${index}`,
+      name,
+      detail: cleanDetail,
+      sets,
+      kcalPerSet: precise(perSet),
+    };
+  }
+  const lib = library?.[raw.name] || {};
+  const sets = Number.isFinite(Number(raw.sets)) ? Number(raw.sets) : inferSets(raw.detail, raw.name);
+  const kcalPerSet = raw.kcalPerSet !== undefined
+    ? Number(raw.kcalPerSet || 0)
+    : sets > 0
+      ? Number(raw.kcal || lib.kcalPerSet || 0) / sets
+      : Number(raw.kcal || lib.kcalPerSet || 0);
+  return {
+    ...raw,
+    id: raw.id || `ex${index}`,
+    name: raw.name || "新动作",
+    detail: cleanExerciseDetail(raw.detail || lib.detail || "", sets),
+    sets,
+    kcalPerSet: precise(kcalPerSet),
+  };
+}
+
+function inferSets(detail, name) {
+  if (String(name || "").includes("休息")) return 0;
+  const match = String(detail || "").match(/(\d+(?:\.\d+)?)\s*组/);
+  return match ? Number(match[1]) : 1;
+}
+
+function cleanExerciseDetail(detail, sets) {
+  const text = String(detail || "").trim();
+  if (!text) return "";
+  const onlySets = text.match(/^\d+(?:\.\d+)?\s*组$/);
+  if (onlySets) return "";
+  const reps = text.match(/^\d+(?:\.\d+)?\s*组\s*[xX×]\s*(.+)$/);
+  if (reps) return /次$/.test(reps[1]) ? reps[1] : `${reps[1]}次`;
+  return sets > 0 ? text.replace(/^\d+(?:\.\d+)?\s*组\s*/, "").trim() : text;
+}
+
+function exerciseKcal(ex) {
+  if (ex.kcal !== undefined && ex.sets === undefined) return Number(ex.kcal || 0);
+  return Number(ex.sets || 0) * Number(ex.kcalPerSet || 0);
+}
+
+function exerciseNames() {
+  return Object.keys(state.store.exerciseLibrary || {}).sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
 function isoDate(date) {
   const d = new Date(date);
   d.setHours(12, 0, 0, 0);
@@ -371,7 +514,7 @@ function createPlan(date) {
     title: t.title,
     base: t.base,
     waterTarget: t.waterTarget,
-    exercises: t.exercises.map(([name, detail, kcal], i) => ({ id: `ex${i}`, name, detail, kcal: Number(kcal || 0) })),
+    exercises: t.exercises.map((raw, i) => normalizeExercise(raw, i, state.store?.exerciseLibrary || EXERCISE_LIBRARY)),
     meals: t.meals.map(([name, items], mealIndex) => ({
       id: `meal${mealIndex}`,
       name,
@@ -386,7 +529,7 @@ function createPlan(date) {
 }
 
 function exerciseTotal(p = plan()) {
-  return p.exercises.reduce((sum, ex) => sum + Number(ex.kcal || 0), 0);
+  return p.exercises.reduce((sum, ex) => sum + exerciseKcal(ex), 0);
 }
 
 function plan(date = state.date) {
@@ -400,7 +543,7 @@ function editablePlan(date = state.date) {
 
 function record(date = state.date) {
   if (!state.store.records[date]) {
-    state.store.records[date] = { foods: {}, exercises: {}, waterSlots: {}, waterMl: 0, body: {}, stool: {} };
+    state.store.records[date] = emptyRecord();
   }
   return state.store.records[date];
 }
@@ -455,14 +598,14 @@ function plannedTotals(p = plan()) {
   return sumMacros(p.meals.flatMap((m) => m.items));
 }
 
-function eatenTotals(p = plan(), r = record()) {
+function eatenTotals(p = plan(), r = readRecord()) {
   return sumMacros(p.meals.flatMap((m) => m.items.filter((item) => r.foods[item.id])));
 }
 
 function weekStats() {
   return weekDates().reduce((acc, date) => {
     const p = plan(date);
-    const r = record(date);
+    const r = readRecord(date);
     const planned = plannedTotals(p);
     const eaten = eatenTotals(p, r);
     acc.plannedKcal += planned.kcal;
@@ -546,7 +689,7 @@ function renderPreservingScroll() {
 const VIEWS = {
   today() {
     const p = plan();
-    const r = record();
+    const r = readRecord();
     const planned = plannedTotals(p);
     const eaten = eatenTotals(p, r);
     const week = weekStats();
@@ -608,24 +751,31 @@ const VIEWS = {
 
   training() {
     const p = plan();
-    const r = record();
-    return html(`<section class="panel">
-      <div class="section-title"><h2>${p.title}</h2><small>估算 ${exerciseTotal(p)} kcal</small></div>
-      <div class="task-list">
-        ${p.exercises.map((ex) => exerciseRow(ex, r.exercises[ex.id])).join("")}
-      </div>
-      <form id="addExerciseForm" class="form-grid add-exercise-form">
-        ${field("name", "动作", "", "例如 坐姿划船")}
-        ${field("detail", "内容", "", "4组 x 10")}
-        ${field("kcal", "估算热量 kcal", "", "40")}
-        <button class="primary-button" type="submit">添加动作</button>
-      </form>
-    </section>`);
+    const r = readRecord();
+    const exerciseOptions = exerciseNames().map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
+    return html(`<div class="stack">
+      <section class="panel">
+        <div class="section-title"><h2>${p.title}</h2><small>估算 ${fmt(exerciseTotal(p))} kcal</small></div>
+        <div class="task-list">
+          ${p.exercises.map((ex) => exerciseRow(ex, r.exercises[ex.id])).join("")}
+        </div>
+        <form id="addExerciseForm" class="form-grid add-exercise-form">
+          <datalist id="exerciseLibraryList">${exerciseOptions}</datalist>
+          <label class="field"><span>动作</span><input name="name" list="exerciseLibraryList" placeholder="例如 坐姿划船" autocomplete="off" /></label>
+          ${field("sets", "组数", "", "4")}
+          ${field("kcalPerSet", "每组 kcal", "", "12")}
+          ${field("detail", "备注", "", "重量/次数/时长")}
+          <div class="food-preview span-2" id="exercisePreview">输入动作和组数后自动估算</div>
+          <button class="primary-button" type="submit">添加动作</button>
+        </form>
+      </section>
+      ${exerciseLibraryEditor()}
+    </div>`);
   },
 
   meals() {
     const p = plan();
-    const r = record();
+    const r = readRecord();
     return html(`<div class="stack">
       ${p.meals.map((meal) => mealCard(meal, r)).join("")}
       ${addFoodPanel(p)}
@@ -640,7 +790,7 @@ const VIEWS = {
 
   water() {
     const p = plan();
-    const r = record();
+    const r = readRecord();
     const slots = waterSlotsFor(p);
     return html(`<div class="stack">
       <section class="score-panel water-score">
@@ -663,7 +813,7 @@ const VIEWS = {
   },
 
   body() {
-    const r = record();
+    const r = readRecord();
     const b = r.body || {};
     const s = r.stool || {};
     return html(`<div class="stack">
@@ -713,7 +863,7 @@ function macroLine(label, actual, target, unit) {
 }
 
 function unfinishedList(p, r) {
-  const exercises = p.exercises.filter((ex) => !r.exercises[ex.id]).slice(0, 3).map((ex) => statusRow(ex.name, ex.detail, false));
+  const exercises = p.exercises.filter((ex) => !r.exercises[ex.id]).slice(0, 3).map((ex) => statusRow(ex.name, `${ex.sets || 0}组 · ${fmt(exerciseKcal(ex))} kcal`, false));
   const foods = p.meals.flatMap((m) => m.items.map((item) => ({ ...item, meal: m.name }))).filter((item) => !r.foods[item.id]).slice(0, 4).map((item) => statusRow(`${item.meal}: ${item.food}`, `${item.amount}${item.unit}`, false));
   const water = r.waterMl >= p.waterTarget ? [] : [statusRow("饮水", `还差 ${fmt(p.waterTarget - (r.waterMl || 0))} ml`, false)];
   const stool = r.stool?.done ? [] : [statusRow("排便", "今天还没记录", false)];
@@ -732,16 +882,27 @@ function taskButton(type, id, done, title, detail, badge) {
 }
 
 function exerciseRow(ex, done) {
+  const sets = Number(ex.sets || 0);
+  const kcalPerSet = Number(ex.kcalPerSet || 0);
+  const total = exerciseKcal(ex);
+  const detail = ex.detail ? ` · ${esc(ex.detail)}` : "";
   return `<div class="exercise-task ${done ? "done" : "todo"}">
     <button class="food-check" data-check="exercise:${ex.id}" type="button"><span class="task-dot"></span></button>
-    <div class="food-main"><b>${ex.name}</b><small>${ex.detail} · ${fmt(ex.kcal)} kcal</small></div>
+    <div class="food-main"><b>${esc(ex.name)}</b><small>${sets}组 · 每组 ${fmt(kcalPerSet, 1)} kcal · 总 ${fmt(total)} kcal${detail}</small></div>
+    <div class="food-actions exercise-actions">
+      <button data-adjust-exercise="${ex.id}:-1" type="button">-1组</button>
+      <button data-adjust-exercise="${ex.id}:1" type="button">+1组</button>
+      <button data-delete-exercise="${ex.id}" type="button">删</button>
+    </div>
     <details class="edit-details">
       <summary>编辑</summary>
       <form class="editExerciseForm form-grid">
         <input type="hidden" name="exerciseId" value="${ex.id}" />
         ${field("name", "动作", ex.name, "动作名称")}
-        ${field("detail", "内容", ex.detail, "4组 x 10")}
-        ${field("kcal", "估算热量 kcal", ex.kcal || 0, "40")}
+        ${field("sets", "组数", sets, "4")}
+        ${field("kcalPerSet", "每组 kcal", kcalPerSet, "12")}
+        ${field("detail", "备注", ex.detail || "", "重量/次数/时长")}
+        <label class="switch-row span-2"><input name="rememberExercise" type="checkbox" checked /> 同步到动作库，以后用这组每组热量</label>
         <button class="primary-button" type="submit">保存</button>
       </form>
     </details>
@@ -961,6 +1122,49 @@ function libraryFoodRow(name, f) {
   </details>`;
 }
 
+function exerciseLibraryEditor() {
+  const names = exerciseNames();
+  const rows = names.length
+    ? names.map((name) => exerciseLibraryRow(name, exerciseDef(name))).join("")
+    : `<p class="empty compact">动作库目前是空的，可以先添加一个常练动作。</p>`;
+  return `<section class="panel library-editor-panel">
+    <div class="section-title"><h2>动作库</h2><small><span data-exercise-library-count>${names.length} 个动作</span></small></div>
+    <label class="choice-search library-search"><span>搜索动作</span><input type="search" data-exercise-library-search placeholder="输入动作名，比如卧推、划船、深蹲" /></label>
+    <details class="nutrition-details add-library-details">
+      <summary>添加新动作</summary>
+      <form id="addLibraryExerciseForm" class="form-grid library-food-form">
+        ${exerciseLibraryFields("", { kcalPerSet: "", detail: "", note: "" })}
+        <button class="primary-button span-2" type="submit">保存到动作库</button>
+      </form>
+    </details>
+    <div class="library-list full-library-list">${rows}</div>
+  </section>`;
+}
+
+function exerciseLibraryFields(name, ex) {
+  return `${field("name", "动作", name, "动作名称")}
+    ${field("kcalPerSet", "每组 kcal", ex.kcalPerSet ?? "", "12")}
+    ${field("detail", "默认备注", ex.detail || "", "重量/次数/时长", "span-2")}
+    ${field("note", "说明", ex.note || "", "估算依据", "span-2")}`;
+}
+
+function exerciseLibraryRow(name, ex) {
+  if (!ex) return "";
+  const source = EXERCISE_LIBRARY[name] ? "内置" : "自建";
+  const searchText = `${name} ${ex.detail || ""} ${ex.note || ""} ${source}`.toLowerCase();
+  return `<details class="library-row" data-exercise-library-row="${esc(searchText)}">
+    <summary>
+      <span><b>${esc(name)}</b><small>${source} · 每组 ${fmt(ex.kcalPerSet, 1)} kcal${ex.detail ? ` · ${esc(ex.detail)}` : ""}${ex.note ? ` · ${esc(ex.note)}` : ""}</small></span>
+    </summary>
+    <form class="editLibraryExerciseForm form-grid library-food-form">
+      <input type="hidden" name="originalName" value="${esc(name)}" />
+      ${exerciseLibraryFields(name, ex)}
+      <button class="primary-button" type="submit">保存修改</button>
+      <button class="plain-button danger-button" data-delete-library-exercise="${esc(name)}" type="button">删除动作</button>
+    </form>
+  </details>`;
+}
+
 function foodNames() {
   return Object.keys(state.store.foods).sort((a, b) => a.localeCompare(b, "zh-CN"));
 }
@@ -1034,7 +1238,7 @@ function drawBodyChart() {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   const dates = weekDates();
-  const points = dates.map((date, i) => ({ i, date, weight: Number(record(date).body?.weight || 0), bodyFat: Number(record(date).body?.bodyFat || 0) }));
+  const points = dates.map((date, i) => ({ i, date, weight: Number(readRecord(date).body?.weight || 0), bodyFat: Number(readRecord(date).body?.bodyFat || 0) }));
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#fffdfa";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1144,6 +1348,21 @@ document.addEventListener("click", async (e) => {
     if (item) item.amount = cleanAmount(Number(item.amount || 0) + Number(delta), item.unit || "g");
     saveStore(); renderPreservingScroll(); return;
   }
+  const adjustExercise = e.target.closest("[data-adjust-exercise]");
+  if (adjustExercise) {
+    const [exerciseId, delta] = adjustExercise.dataset.adjustExercise.split(":");
+    const p = editablePlan();
+    const ex = p.exercises.find((x) => x.id === exerciseId);
+    if (ex) ex.sets = Math.max(0, Math.round((Number(ex.sets || 0) + Number(delta)) * 10) / 10);
+    saveStore(); renderPreservingScroll(); return;
+  }
+  const deleteExercise = e.target.closest("[data-delete-exercise]");
+  if (deleteExercise) {
+    const p = editablePlan();
+    p.exercises = p.exercises.filter((x) => x.id !== deleteExercise.dataset.deleteExercise);
+    delete record().exercises[deleteExercise.dataset.deleteExercise];
+    saveStore(); renderPreservingScroll(); return;
+  }
   const del = e.target.closest("[data-delete-food]");
   if (del) {
     const [mealId, itemId] = del.dataset.deleteFood.split(":");
@@ -1159,6 +1378,16 @@ document.addEventListener("click", async (e) => {
     if (!name) return;
     if (!confirm(`删除“${name}”？已经加到饮食里的记录会保留当时的营养数据。`)) return;
     deleteFoodFromLibrary(name);
+    saveStore();
+    renderPreservingScroll();
+    return;
+  }
+  const exerciseLibraryDelete = e.target.closest("[data-delete-library-exercise]");
+  if (exerciseLibraryDelete) {
+    const name = exerciseLibraryDelete.dataset.deleteLibraryExercise;
+    if (!name) return;
+    if (!confirm(`删除动作“${name}”？已经加到训练计划里的动作会保留。`)) return;
+    deleteExerciseDef(name);
     saveStore();
     renderPreservingScroll();
     return;
@@ -1201,6 +1430,15 @@ document.addEventListener("submit", (e) => {
     }
     upsertFood(name, nextFood);
   }
+  if (e.target.id === "addLibraryExerciseForm") {
+    const name = String(data.get("name") || "").trim();
+    const kcalPerSet = Number(data.get("kcalPerSet") || 0);
+    if (!name || !Number.isFinite(kcalPerSet)) {
+      alert("请填写动作名称和每组热量。");
+      return;
+    }
+    upsertExerciseDef(name, { kcalPerSet, detail: data.get("detail") || "", note: data.get("note") || "" });
+  }
   if (e.target.classList.contains("editLibraryFoodForm")) {
     const originalName = String(data.get("originalName") || "").trim();
     const name = String(data.get("name") || "").trim();
@@ -1214,6 +1452,17 @@ document.addEventListener("submit", (e) => {
       deleteFoodFromLibrary(originalName);
     }
     upsertFood(name, nextFood);
+  }
+  if (e.target.classList.contains("editLibraryExerciseForm")) {
+    const originalName = String(data.get("originalName") || "").trim();
+    const name = String(data.get("name") || "").trim();
+    const kcalPerSet = Number(data.get("kcalPerSet") || 0);
+    if (!name || !Number.isFinite(kcalPerSet)) {
+      alert("请填写动作名称和每组热量。");
+      return;
+    }
+    if (originalName && originalName !== name) deleteExerciseDef(originalName);
+    upsertExerciseDef(name, { kcalPerSet, detail: data.get("detail") || "", note: data.get("note") || "" });
   }
   if (e.target.id === "customFoodForm") {
     const p = editablePlan();
@@ -1287,18 +1536,30 @@ document.addEventListener("submit", (e) => {
     const p = editablePlan();
     const ex = p.exercises.find((x) => x.id === data.get("exerciseId"));
     if (ex) {
-      ex.name = data.get("name") || ex.name;
+      ex.name = String(data.get("name") || ex.name).trim();
       ex.detail = data.get("detail") || "";
-      ex.kcal = Number(data.get("kcal") || 0);
+      ex.sets = Math.max(0, Number(data.get("sets") || 0));
+      ex.kcalPerSet = Math.max(0, Number(data.get("kcalPerSet") || 0));
+      delete ex.kcal;
+      if (data.get("rememberExercise") === "on") {
+        upsertExerciseDef(ex.name, { kcalPerSet: ex.kcalPerSet, detail: ex.detail, note: "" });
+      }
     }
   }
   if (e.target.id === "addExerciseForm") {
     const p = editablePlan();
+    const name = String(data.get("name") || "新动作").trim();
+    const lib = exerciseDef(name);
+    const sets = Math.max(0, Number(data.get("sets") || 1));
+    const kcalPerSet = Number(data.get("kcalPerSet") || lib?.kcalPerSet || 0);
+    const detail = String(data.get("detail") || lib?.detail || "").trim();
+    if (name && !exerciseDef(name)) upsertExerciseDef(name, { kcalPerSet, detail, note: "" });
     p.exercises.push({
       id: uid("ex"),
-      name: data.get("name") || "新动作",
-      detail: data.get("detail") || "",
-      kcal: Number(data.get("kcal") || 0),
+      name,
+      detail,
+      sets,
+      kcalPerSet,
     });
   }
   saveStore();
@@ -1316,6 +1577,10 @@ document.addEventListener("input", (e) => {
   if (choiceSearch) syncChoiceSearch(choiceSearch);
   const librarySearch = e.target.closest("[data-library-search]");
   if (librarySearch) syncLibrarySearch(librarySearch);
+  const exerciseLibrarySearch = e.target.closest("[data-exercise-library-search]");
+  if (exerciseLibrarySearch) syncExerciseLibrarySearch(exerciseLibrarySearch);
+  const addExerciseForm = e.target.closest("#addExerciseForm");
+  if (addExerciseForm) syncExerciseForm(addExerciseForm, e.target.name === "name");
 });
 
 document.addEventListener("change", (e) => {
@@ -1329,6 +1594,10 @@ document.addEventListener("change", (e) => {
   if (choiceSearch) syncChoiceSearch(choiceSearch);
   const librarySearch = e.target.closest("[data-library-search]");
   if (librarySearch) syncLibrarySearch(librarySearch);
+  const exerciseLibrarySearch = e.target.closest("[data-exercise-library-search]");
+  if (exerciseLibrarySearch) syncExerciseLibrarySearch(exerciseLibrarySearch);
+  const addExerciseForm = e.target.closest("#addExerciseForm");
+  if (addExerciseForm) syncExerciseForm(addExerciseForm, e.target.name === "name");
 });
 
 ["keyup", "search", "compositionend"].forEach((eventName) => {
@@ -1337,6 +1606,8 @@ document.addEventListener("change", (e) => {
     if (choiceSearch) syncChoiceSearch(choiceSearch);
     const librarySearch = e.target.closest?.("[data-library-search]");
     if (librarySearch) syncLibrarySearch(librarySearch);
+    const exerciseLibrarySearch = e.target.closest?.("[data-exercise-library-search]");
+    if (exerciseLibrarySearch) syncExerciseLibrarySearch(exerciseLibrarySearch);
   });
 });
 
@@ -1440,6 +1711,42 @@ function syncLibrarySearch(input) {
   if (count) count.textContent = q ? `${shown} / ${rows.length} 个匹配` : `${rows.length} 个食物`;
 }
 
+function syncExerciseLibrarySearch(input) {
+  const panel = input.closest(".library-editor-panel");
+  const q = input.value.trim().toLowerCase();
+  if (!panel) return;
+  const rows = panel.querySelectorAll("[data-exercise-library-row]");
+  let shown = 0;
+  rows.forEach((row) => {
+    const match = !q || String(row.dataset.exerciseLibraryRow || "").includes(q);
+    row.classList.toggle("is-hidden", !match);
+    if (match) shown += 1;
+  });
+  const count = panel.querySelector("[data-exercise-library-count]");
+  if (count) count.textContent = q ? `${shown} / ${rows.length} 个匹配` : `${rows.length} 个动作`;
+}
+
+function syncExerciseForm(form, fillFromLibrary = false) {
+  const name = String(form.elements.name?.value || "").trim();
+  const lib = exerciseDef(name);
+  if (lib && fillFromLibrary) {
+    form.elements.kcalPerSet.value = lib.kcalPerSet ?? "";
+    if (!form.elements.detail.value) form.elements.detail.value = lib.detail || "";
+    if (!form.elements.sets.value) form.elements.sets.value = 4;
+  }
+  const sets = Number(form.elements.sets?.value || 0);
+  const kcalPerSet = Number(form.elements.kcalPerSet?.value || lib?.kcalPerSet || 0);
+  const preview = document.getElementById("exercisePreview");
+  if (!preview) return;
+  if (!name) {
+    preview.textContent = "输入动作和组数后自动估算";
+    preview.className = "food-preview span-2";
+    return;
+  }
+  preview.textContent = `${sets || 0}组 × ${fmt(kcalPerSet, 1)} kcal = ${fmt(sets * kcalPerSet)} kcal`;
+  preview.className = lib ? "food-preview ok span-2" : "food-preview span-2";
+}
+
 document.getElementById("exportBtn").addEventListener("click", async () => {
   const blob = await buildXlsx(exportRows(), JSON.stringify(state.store));
   downloadBlob(blob, `cutting-tracker-${state.date}.xlsx`);
@@ -1476,13 +1783,13 @@ function exportRows() {
   const dates = Object.keys({ ...Object.fromEntries(weekDates().map((d) => [d, true])), ...state.store.records, ...state.store.plans }).sort();
   const summary = [["日期", "星期", "训练", "计划摄入", "已吃", "总消耗", "计划缺口", "实际缺口", "饮水", "饮水目标", "排便", "体重", "体脂", "腰围"]];
   const foodRows = [["日期", "餐次", "食物", "数量", "单位", "热量", "蛋白", "碳水", "脂肪", "完成"]];
-  const trainRows = [["日期", "训练", "动作", "内容", "估算热量", "完成"]];
+  const trainRows = [["日期", "训练", "动作", "组数", "每组热量", "总热量", "备注", "完成"]];
   const bodyRows = [["日期", "体重", "体脂", "腰围", "备注"]];
   const stoolRows = [["日期", "是否排便", "时间", "形状", "备注"]];
   const waterRows = [["日期", "饮水ml", "目标ml"]];
   for (const date of dates) {
     const p = plan(date);
-    const r = record(date);
+    const r = readRecord(date);
     const planned = plannedTotals(p);
     const eaten = eatenTotals(p, r);
     const burn = p.base + exerciseTotal(p);
@@ -1491,17 +1798,23 @@ function exportRows() {
       const macro = foodMacro(item);
       foodRows.push([date, m.name, item.food || item.name, item.amount, item.unit || "", rnd(macro.kcal), rnd(macro.p), rnd(macro.c), rnd(macro.f), r.foods[item.id] ? "是" : "否"]);
     }));
-    p.exercises.forEach((ex) => trainRows.push([date, p.title, ex.name, ex.detail, ex.kcal || 0, r.exercises[ex.id] ? "是" : "否"]));
+    p.exercises.forEach((ex) => trainRows.push([date, p.title, ex.name, ex.sets || 0, rnd(ex.kcalPerSet || 0), rnd(exerciseKcal(ex)), ex.detail || "", r.exercises[ex.id] ? "是" : "否"]));
     bodyRows.push([date, r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || "", r.body?.note || ""]);
     stoolRows.push([date, r.stool?.done ? "是" : "否", r.stool?.time || "", r.stool?.shape || "", r.stool?.note || ""]);
     waterRows.push([date, r.waterMl || 0, p.waterTarget]);
   }
   const foodLib = [["食物", "单位", "热量", "蛋白", "碳水", "脂肪", "计算方式", "备注"], ...Object.entries(state.store.foods).map(([name, f]) => [name, f.unit, f.kcal, f.p, f.c, f.f, f.perUnit ? "每单位" : "每100g/ml", f.note || ""])];
-  return { "概览": summary, "饮食记录": foodRows, "训练记录": trainRows, "饮水记录": waterRows, "身体记录": bodyRows, "排便记录": stoolRows, "食物库": foodLib };
+  const exerciseLib = [["动作", "每组热量", "默认备注", "说明"], ...Object.entries(state.store.exerciseLibrary || {}).map(([name, ex]) => [name, ex.kcalPerSet || 0, ex.detail || "", ex.note || ""])];
+  return { "概览": summary, "饮食记录": foodRows, "训练记录": trainRows, "饮水记录": waterRows, "身体记录": bodyRows, "排便记录": stoolRows, "食物库": foodLib, "动作库": exerciseLib };
 }
 
 function rnd(n) {
   return Math.round(Number(n || 0) * 10) / 10;
+}
+
+function precise(n, d = 4) {
+  const x = Number(n || 0);
+  return Number.isFinite(x) ? Number(x.toFixed(d)) : 0;
 }
 
 async function buildXlsx(sheets, storeJson) {

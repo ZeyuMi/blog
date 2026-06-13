@@ -459,6 +459,12 @@ h1 { font-size: 27px; line-height: 1.08; }
   font-weight: 850;
 }
 
+.exercise-actions button {
+  min-width: 44px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
 .edit-details { grid-column: 2 / -1; }
 
 .edit-details summary,
