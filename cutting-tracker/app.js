@@ -746,7 +746,8 @@ function mealChoicePanel(meal) {
   if (!choices.length) return "";
   return `<details class="choice-panel" data-choice-panel="${meal.id}">
     <summary>可选食物 · 全部食物库</summary>
-    <label class="choice-search"><span>搜索</span><input data-choice-search="${meal.id}" placeholder="输入食物名，比如卤牛肉、凉皮、虾" /></label>
+    <label class="choice-search"><span>搜索</span><input type="search" data-choice-search="${meal.id}" placeholder="输入食物名，比如卤牛肉、沙拉、凉皮" /></label>
+    <div class="choice-search-meta"><span data-choice-count="${meal.id}">${choices.length} 个可选</span></div>
     <div class="choice-list">
       ${choices.map(([food, amount]) => choiceRow(meal, food, amount)).join("")}
     </div>
@@ -770,7 +771,8 @@ function choiceRow(meal, food, amount) {
   const lib = state.store.foods[food] || FOOD_LIBRARY[food];
   const unit = lib?.unit || "g";
   const macro = scaleMacro(lib, amount);
-  return `<div class="choice-row" data-choice-row="${esc(food.toLowerCase())}">
+  const searchText = `${food} ${lib?.note || ""}`.toLowerCase();
+  return `<div class="choice-row" data-choice-row="${esc(searchText)}">
     <div><b>${esc(food)}</b><small>${amount}${unit} · ${fmt(macro.kcal)} kcal · P${fmt(macro.p, 1)} C${fmt(macro.c, 1)} F${fmt(macro.f, 1)}</small></div>
     <button data-choice-meal="${meal.id}" data-choice-food="${esc(food)}" data-choice-amount="${amount}" type="button">加入</button>
   </div>`;
@@ -1197,6 +1199,13 @@ document.addEventListener("change", (e) => {
   if (choiceSearch) syncChoiceSearch(choiceSearch);
 });
 
+["keyup", "search", "compositionend"].forEach((eventName) => {
+  document.addEventListener(eventName, (e) => {
+    const choiceSearch = e.target.closest?.("[data-choice-search]");
+    if (choiceSearch) syncChoiceSearch(choiceSearch);
+  });
+});
+
 function foodFromForm(data) {
   const unit = String(data.get("unit") || "g").trim() || "g";
   const values = {
@@ -1269,9 +1278,16 @@ function syncEditFoodForm(form, changedName) {
 function syncChoiceSearch(input) {
   const panel = input.closest(".choice-panel");
   const q = input.value.trim().toLowerCase();
-  panel?.querySelectorAll(".choice-row").forEach((row) => {
-    row.hidden = q && !String(row.dataset.choiceRow || "").includes(q);
+  if (!panel) return;
+  const rows = panel.querySelectorAll(".choice-row");
+  let shown = 0;
+  rows.forEach((row) => {
+    const match = !q || String(row.dataset.choiceRow || "").includes(q);
+    row.classList.toggle("is-hidden", !match);
+    if (match) shown += 1;
   });
+  const count = panel.querySelector("[data-choice-count]");
+  if (count) count.textContent = q ? `${shown} / ${rows.length} 个匹配` : `${rows.length} 个可选`;
 }
 
 document.getElementById("exportBtn").addEventListener("click", async () => {
