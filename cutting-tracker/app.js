@@ -346,24 +346,42 @@ function render() {
   document.querySelectorAll(".tab").forEach((btn) => btn.classList.toggle("is-active", btn.dataset.tab === state.tab));
   const titles = { today: "概览", training: "训练", meals: "饮食", water: "饮水", body: "身体" };
   document.getElementById("pageTitle").textContent = `${titles[state.tab]} · ${plan().day}`;
+  document.getElementById("dateContext").textContent = dateContextText();
   const view = document.getElementById("view");
   view.innerHTML = "";
   view.append(VIEWS[state.tab]());
   if (state.tab === "body") requestAnimationFrame(drawBodyChart);
+  requestAnimationFrame(centerActiveDate);
 }
 
 function renderWeekbar() {
   const dates = weekDates();
-  document.getElementById("weekLabel").textContent = `${dates[0].slice(5)} 至 ${dates[6].slice(5)}`;
+  const currentWeek = dates.includes(initialDate());
+  document.getElementById("weekLabel").textContent = `${dates[0].slice(5)} 至 ${dates[6].slice(5)}${currentWeek ? " · 本周" : ""}`;
 }
 
 function renderDates() {
   document.getElementById("dateStrip").innerHTML = weekDates().map((date) => {
     const p = plan(date);
-    return `<button class="date-pill ${date === state.date ? "is-active" : ""}" data-date="${date}" type="button">
-      <strong>${p.day}</strong><span>${date.slice(5)}</span>
+    const isSelected = date === state.date;
+    const isToday = date === initialDate();
+    return `<button class="date-pill ${isSelected ? "is-active" : ""} ${isToday ? "is-today" : ""}" data-date="${date}" type="button">
+      <strong>${p.day}</strong><span>${date.slice(5)}</span>${isToday ? "<em>今天</em>" : ""}
     </button>`;
   }).join("");
+}
+
+function dateContextText() {
+  const today = initialDate();
+  if (state.date === today) return `今天 ${today.slice(5)} · ${plan().title}`;
+  return `${state.date.slice(5)} · ${plan().title}`;
+}
+
+function centerActiveDate() {
+  const strip = document.getElementById("dateStrip");
+  const active = strip?.querySelector(".date-pill.is-active");
+  if (!strip || !active) return;
+  active.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
 }
 
 const VIEWS = {
@@ -376,6 +394,11 @@ const VIEWS = {
     const burn = p.base + exerciseTotal(p);
     const plannedDeficit = burn - planned.kcal;
     const remainingKcal = burn - eaten.kcal;
+    const foodItems = p.meals.flatMap((m) => m.items);
+    const foodDone = foodItems.filter((item) => r.foods[item.id]).length;
+    const exerciseDone = p.exercises.filter((ex) => r.exercises[ex.id]).length;
+    const waterDone = r.waterMl >= p.waterTarget;
+    const stoolDone = !!r.stool?.done;
     return html(`<div class="stack">
       <section class="panel">
         <div class="section-title"><h2>本周情况</h2><small>${week.foodDone}/${week.foodTotal} 食物 · ${week.exerciseDone}/${week.exerciseTotal} 训练</small></div>
@@ -396,6 +419,16 @@ const VIEWS = {
         <div class="score-side">
           <b>${fmt(eaten.kcal)}</b><span>已吃 / 目标 ${fmt(planned.kcal)}</span>
           <b>${fmt(r.waterMl)}</b><span>饮水 / 目标 ${p.waterTarget}ml</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><h2>今日执行</h2><small>${state.date.slice(5)} · ${p.title}</small></div>
+        <div class="metric-grid">
+          ${miniMetric("饮食打卡", `${foodDone}/${foodItems.length}`, foodDone === foodItems.length ? "green" : "red")}
+          ${miniMetric("训练打卡", `${exerciseDone}/${p.exercises.length}`, exerciseDone === p.exercises.length ? "green" : "red")}
+          ${miniMetric("饮水", `${fmt(r.waterMl)} / ${p.waterTarget} ml`, waterDone ? "green" : "blue")}
+          ${miniMetric("排便", stoolDone ? "已记录" : "未记录", stoolDone ? "green" : "amber")}
         </div>
       </section>
 
