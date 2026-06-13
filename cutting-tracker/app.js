@@ -174,6 +174,7 @@ const state = {
   date: initialDate(),
   store: loadStore(),
   centerDateOnRender: true,
+  estimateMealId: "",
 };
 
 function initialDate() {
@@ -431,6 +432,12 @@ function centerActiveDate() {
   active.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
 }
 
+function renderPreservingScroll() {
+  const y = window.scrollY || 0;
+  render();
+  requestAnimationFrame(() => window.scrollTo(0, y));
+}
+
 const VIEWS = {
   today() {
     const p = plan();
@@ -634,11 +641,16 @@ function exerciseRow(ex, done) {
 function mealCard(meal, r) {
   const total = sumMacros(meal.items);
   const done = meal.items.filter((item) => r.foods[item.id]).length;
+  const estimateOpen = state.estimateMealId === meal.id;
   return `<section class="meal-card">
     <div class="meal-head">
       <div><h3>${meal.name}</h3><small>${fmt(total.kcal)} kcal · P ${fmt(total.p, 1)} / C ${fmt(total.c, 1)} / F ${fmt(total.f, 1)}</small></div>
-      <span class="badge ${done === meal.items.length ? "ok" : "warn"}">${done}/${meal.items.length}</span>
+      <div class="meal-actions">
+        <button class="estimate-button ${estimateOpen ? "is-active" : ""}" data-estimate-meal="${meal.id}" type="button">+ 估算餐</button>
+        <span class="badge ${done === meal.items.length ? "ok" : "warn"}">${done}/${meal.items.length}</span>
+      </div>
     </div>
+    ${estimateOpen ? estimateMealForm(meal) : ""}
     <div class="task-list">
       ${meal.items.map((item) => {
         const m = foodMacro(item);
@@ -669,6 +681,45 @@ function mealCard(meal, r) {
       }).join("")}
     </div>
   </section>`;
+}
+
+function estimateMealForm(meal) {
+  const preview = estimateMealMacros({ portion: "medium", oil: "normal", carb: "medium", protein: "medium" });
+  return `<form class="estimateMealForm estimate-panel">
+    <input type="hidden" name="mealId" value="${meal.id}" />
+    <div class="form-grid">
+      ${field("name", "菜名", "", "毛豆米烧鸡 / 蛏子粉丝")}
+      <label class="field"><span>份量</span><select name="portion">
+        <option value="small">小份</option>
+        <option value="medium" selected>中份</option>
+        <option value="large">大份</option>
+        <option value="feast">聚餐/很大份</option>
+      </select></label>
+      <label class="field"><span>油量</span><select name="oil">
+        <option value="low">少油</option>
+        <option value="normal" selected>正常</option>
+        <option value="high">油多</option>
+        <option value="veryHigh">重油/红烧</option>
+      </select></label>
+      <label class="field"><span>主食/粉丝/豆类</span><select name="carb">
+        <option value="none">没有</option>
+        <option value="low">少</option>
+        <option value="medium" selected>中等</option>
+        <option value="high">多</option>
+      </select></label>
+      <label class="field"><span>蛋白质</span><select name="protein">
+        <option value="low">少</option>
+        <option value="medium" selected>中等</option>
+        <option value="high">多</option>
+      </select></label>
+      ${field("note", "备注", "", "比如粉丝多、盘底有油", "span-2")}
+    </div>
+    <div class="estimate-preview">${estimatePreviewText(preview)}</div>
+    <div class="estimate-actions">
+      <button class="plain-button" data-estimate-close="1" type="button">收起</button>
+      <button class="primary-button" type="submit">加入${meal.name}</button>
+    </div>
+  </form>`;
 }
 
 function addFoodPanel(p) {
@@ -722,6 +773,51 @@ function foodLibraryPanel() {
 
 function foodNames() {
   return Object.keys(state.store.foods).sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
+function estimateMealMacros(input) {
+  const portion = {
+    small: { kcal: 360, p: 24, c: 22, f: 18 },
+    medium: { kcal: 600, p: 35, c: 45, f: 28 },
+    large: { kcal: 850, p: 45, c: 70, f: 38 },
+    feast: { kcal: 1100, p: 55, c: 95, f: 52 },
+  }[input.portion || "medium"];
+  const oil = {
+    low: { kcal: -100, f: -11 },
+    normal: { kcal: 0, f: 0 },
+    high: { kcal: 220, f: 24 },
+    veryHigh: { kcal: 380, f: 42 },
+  }[input.oil || "normal"];
+  const carb = {
+    none: { kcal: -180, c: -45 },
+    low: { kcal: -90, c: -22 },
+    medium: { kcal: 0, c: 0 },
+    high: { kcal: 180, c: 45 },
+  }[input.carb || "medium"];
+  const protein = {
+    low: { kcal: -80, p: -18, f: -2 },
+    medium: { kcal: 0, p: 0, f: 0 },
+    high: { kcal: 120, p: 28, f: 2 },
+  }[input.protein || "medium"];
+  return clampMacro({
+    kcal: portion.kcal + oil.kcal + carb.kcal + protein.kcal,
+    p: portion.p + protein.p,
+    c: portion.c + carb.c,
+    f: portion.f + oil.f + protein.f,
+  });
+}
+
+function clampMacro(m) {
+  return {
+    kcal: Math.max(80, Math.round(m.kcal)),
+    p: Math.max(0, Math.round(m.p * 10) / 10),
+    c: Math.max(0, Math.round(m.c * 10) / 10),
+    f: Math.max(0, Math.round(m.f * 10) / 10),
+  };
+}
+
+function estimatePreviewText(m) {
+  return `估算 ${fmt(m.kcal)} kcal · 蛋白 ${fmt(m.p, 1)}g · 碳水 ${fmt(m.c, 1)}g · 脂肪 ${fmt(m.f, 1)}g`;
 }
 
 function field(name, label, value, placeholder, extra = "") {
@@ -807,6 +903,17 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
+  const estimateBtn = e.target.closest("[data-estimate-meal]");
+  if (estimateBtn) {
+    state.estimateMealId = state.estimateMealId === estimateBtn.dataset.estimateMeal ? "" : estimateBtn.dataset.estimateMeal;
+    renderPreservingScroll();
+    return;
+  }
+  if (e.target.closest("[data-estimate-close]")) {
+    state.estimateMealId = "";
+    renderPreservingScroll();
+    return;
+  }
   const check = e.target.closest("[data-check]");
   if (check) {
     const r = record();
@@ -817,18 +924,18 @@ document.addEventListener("click", async (e) => {
       r.waterSlots[id] = !r.waterSlots[id];
       r.waterMl = Math.max(0, (r.waterMl || 0) + (r.waterSlots[id] ? Number(amount) : -Number(amount)));
     }
-    saveStore(); render(); return;
+    saveStore(); renderPreservingScroll(); return;
   }
   const addWater = e.target.closest("[data-water-add]");
-  if (addWater) { const r = record(); r.waterMl = (r.waterMl || 0) + Number(addWater.dataset.waterAdd); saveStore(); render(); return; }
-  if (e.target.closest("[data-water-reset]")) { const r = record(); r.waterMl = 0; r.waterSlots = {}; saveStore(); render(); return; }
+  if (addWater) { const r = record(); r.waterMl = (r.waterMl || 0) + Number(addWater.dataset.waterAdd); saveStore(); renderPreservingScroll(); return; }
+  if (e.target.closest("[data-water-reset]")) { const r = record(); r.waterMl = 0; r.waterSlots = {}; saveStore(); renderPreservingScroll(); return; }
   const adjust = e.target.closest("[data-adjust]");
   if (adjust) {
     const [mealId, itemId, delta] = adjust.dataset.adjust.split(":");
     const p = editablePlan();
     const item = p.meals.find((m) => m.id === mealId)?.items.find((x) => x.id === itemId);
     if (item) item.amount = Math.max(0, Number(item.amount || 0) + Number(delta));
-    saveStore(); render(); return;
+    saveStore(); renderPreservingScroll(); return;
   }
   const del = e.target.closest("[data-delete-food]");
   if (del) {
@@ -837,7 +944,7 @@ document.addEventListener("click", async (e) => {
     const meal = p.meals.find((m) => m.id === mealId);
     if (meal) meal.items = meal.items.filter((x) => x.id !== itemId);
     delete record().foods[itemId];
-    saveStore(); render(); return;
+    saveStore(); renderPreservingScroll(); return;
   }
 });
 
@@ -872,6 +979,33 @@ document.addEventListener("submit", (e) => {
     const p = editablePlan();
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
     if (meal) meal.items.push({ id: uid("custom"), custom: true, food: data.get("name") || "自定义食物", name: data.get("name") || "自定义食物", amount: 1, unit: "份", kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0) });
+  }
+  if (e.target.classList.contains("estimateMealForm")) {
+    const p = editablePlan();
+    const meal = p.meals.find((m) => m.id === data.get("mealId"));
+    const macro = estimateMealMacros({
+      portion: data.get("portion"),
+      oil: data.get("oil"),
+      carb: data.get("carb"),
+      protein: data.get("protein"),
+    });
+    if (meal) {
+      const name = String(data.get("name") || "").trim() || "估算餐";
+      meal.items.push({
+        id: uid("estimate"),
+        custom: true,
+        food: name,
+        name,
+        amount: 1,
+        unit: "份",
+        kcal: macro.kcal,
+        p: macro.p,
+        c: macro.c,
+        f: macro.f,
+        note: data.get("note") || "",
+      });
+      state.estimateMealId = "";
+    }
   }
   if (e.target.classList.contains("editFoodForm")) {
     const p = editablePlan();
@@ -908,19 +1042,21 @@ document.addEventListener("submit", (e) => {
     });
   }
   saveStore();
-  render();
+  renderPreservingScroll();
 });
 
 document.addEventListener("input", (e) => {
   const form = e.target.closest("#addFoodForm");
-  if (!form) return;
-  syncFoodForm(form, e.target.name === "food");
+  if (form) syncFoodForm(form, e.target.name === "food");
+  const estimateForm = e.target.closest(".estimateMealForm");
+  if (estimateForm) syncEstimateForm(estimateForm);
 });
 
 document.addEventListener("change", (e) => {
   const form = e.target.closest("#addFoodForm");
-  if (!form) return;
-  syncFoodForm(form, e.target.name === "food");
+  if (form) syncFoodForm(form, e.target.name === "food");
+  const estimateForm = e.target.closest(".estimateMealForm");
+  if (estimateForm) syncEstimateForm(estimateForm);
 });
 
 function foodFromForm(data) {
@@ -965,6 +1101,19 @@ function syncFoodForm(form, fillFromLibrary = false) {
   const macro = scaleMacro(candidate, amount);
   preview.textContent = `${amount || 0}${candidate.unit || ""} ≈ ${fmt(macro.kcal)} kcal · 蛋白 ${fmt(macro.p, 1)}g · 碳水 ${fmt(macro.c, 1)}g · 脂肪 ${fmt(macro.f, 1)}g`;
   preview.className = saved ? "food-preview ok" : "food-preview";
+}
+
+function syncEstimateForm(form) {
+  const data = new FormData(form);
+  const preview = form.querySelector(".estimate-preview");
+  if (!preview) return;
+  const macro = estimateMealMacros({
+    portion: data.get("portion"),
+    oil: data.get("oil"),
+    carb: data.get("carb"),
+    protein: data.get("protein"),
+  });
+  preview.textContent = estimatePreviewText(macro);
 }
 
 document.getElementById("exportBtn").addEventListener("click", async () => {
