@@ -49,12 +49,28 @@ const FOOD_LIBRARY = {
   "甜品/小吃": { unit: "g", kcal: 300, p: 4, c: 40, f: 13 },
 };
 
-const MEAL_CHOICES = {
-  breakfast: [["盒马无糖无脂酸奶", 100], ["有机燕麦", 30], ["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30]],
-  lunch: [["盒马烤蔬牛肉三色糙米能量碗", 280], ["盒马即食炙烤鸡胸肉条", 120], ["鸡丝大拌菜", 190], ["鸡丝凉面", 370], ["紫薯土豆泥蔬菜沙拉", 300], ["卤牛肉", 150], ["卤牛肉", 300], ["象大厨麻酱凉皮", 400], ["象大厨麻酱凉皮牛筋面双拼", 378]],
-  snack: [["盒马无糖无脂酸奶", 100], ["有机燕麦", 25], ["盒马即食炙烤鸡胸肉条", 120], ["卤牛肉", 100], ["甜虾刺身", 60], ["北极贝刺身", 60], ["混合坚果", 6]],
-  dinner: [["盒马烤蔬牛肉三色糙米能量碗", 280], ["三文鱼", 100], ["卤牛肉", 150], ["甜虾刺身", 60], ["北极贝刺身", 60], ["紫薯土豆泥蔬菜沙拉", 300], ["鸡丝大拌菜", 190], ["鸡丝凉面", 370], ["象大厨麻酱凉皮", 400], ["象大厨麻酱凉皮牛筋面双拼", 378]],
-  indulgence: [["威士忌", 150], ["麦当劳薯角", 1], ["麦当劳鸡米花", 1], ["三文鱼", 200], ["阿根廷红虾", 150], ["甜虾刺身", 60], ["北极贝刺身", 60]],
+const DEFAULT_CHOICE_AMOUNTS = {
+  "盒马无糖无脂酸奶": 100,
+  "有机燕麦": 30,
+  "香蕉": 120,
+  "水煮鸡蛋": 50,
+  "分离乳清蛋白粉": 30,
+  "盒马烤蔬牛肉三色糙米能量碗": 280,
+  "盒马即食炙烤鸡胸肉条": 120,
+  "鸡丝大拌菜": 190,
+  "鸡丝凉面": 370,
+  "紫薯土豆泥蔬菜沙拉": 300,
+  "卤牛肉": 150,
+  "象大厨麻酱凉皮": 400,
+  "象大厨麻酱凉皮牛筋面双拼": 378,
+  "甜虾刺身": 60,
+  "北极贝刺身": 60,
+  "混合坚果": 6,
+  "三文鱼": 100,
+  "阿根廷红虾": 150,
+  "威士忌": 150,
+  "麦当劳薯角": 1,
+  "麦当劳鸡米花": 1,
 };
 
 const WEEK_TEMPLATE = [
@@ -729,7 +745,8 @@ function mealChoicePanel(meal) {
   const choices = mealChoices(meal);
   if (!choices.length) return "";
   return `<details class="choice-panel" data-choice-panel="${meal.id}">
-    <summary>可选食物</summary>
+    <summary>可选食物 · 全部食物库</summary>
+    <label class="choice-search"><span>搜索</span><input data-choice-search="${meal.id}" placeholder="输入食物名，比如卤牛肉、凉皮、虾" /></label>
     <div class="choice-list">
       ${choices.map(([food, amount]) => choiceRow(meal, food, amount)).join("")}
     </div>
@@ -737,19 +754,23 @@ function mealChoicePanel(meal) {
 }
 
 function mealChoices(meal) {
-  if (meal.name.includes("早餐")) return MEAL_CHOICES.breakfast;
-  if (meal.name.includes("午餐")) return MEAL_CHOICES.lunch;
-  if (meal.name.includes("加餐")) return MEAL_CHOICES.snack;
-  if (meal.name.includes("放纵")) return MEAL_CHOICES.indulgence;
-  if (meal.name.includes("晚餐")) return MEAL_CHOICES.dinner;
-  return [];
+  return foodNames().map((food) => [food, defaultChoiceAmount(food)]);
+}
+
+function defaultChoiceAmount(food) {
+  const lib = state.store.foods[food] || FOOD_LIBRARY[food];
+  if (DEFAULT_CHOICE_AMOUNTS[food] !== undefined) return DEFAULT_CHOICE_AMOUNTS[food];
+  if (lib?.perUnit) return 1;
+  if (lib?.unit === "ml") return 100;
+  if (lib?.unit === "颗") return 6;
+  return 100;
 }
 
 function choiceRow(meal, food, amount) {
   const lib = state.store.foods[food] || FOOD_LIBRARY[food];
   const unit = lib?.unit || "g";
   const macro = scaleMacro(lib, amount);
-  return `<div class="choice-row">
+  return `<div class="choice-row" data-choice-row="${esc(food.toLowerCase())}">
     <div><b>${esc(food)}</b><small>${amount}${unit} · ${fmt(macro.kcal)} kcal · P${fmt(macro.p, 1)} C${fmt(macro.c, 1)} F${fmt(macro.f, 1)}</small></div>
     <button data-choice-meal="${meal.id}" data-choice-food="${esc(food)}" data-choice-amount="${amount}" type="button">加入</button>
   </div>`;
@@ -1161,6 +1182,8 @@ document.addEventListener("input", (e) => {
   if (estimateForm) syncEstimateForm(estimateForm);
   const editFoodForm = e.target.closest(".editFoodForm");
   if (editFoodForm) syncEditFoodForm(editFoodForm, e.target.name);
+  const choiceSearch = e.target.closest("[data-choice-search]");
+  if (choiceSearch) syncChoiceSearch(choiceSearch);
 });
 
 document.addEventListener("change", (e) => {
@@ -1170,6 +1193,8 @@ document.addEventListener("change", (e) => {
   if (estimateForm) syncEstimateForm(estimateForm);
   const editFoodForm = e.target.closest(".editFoodForm");
   if (editFoodForm) syncEditFoodForm(editFoodForm, e.target.name);
+  const choiceSearch = e.target.closest("[data-choice-search]");
+  if (choiceSearch) syncChoiceSearch(choiceSearch);
 });
 
 function foodFromForm(data) {
@@ -1238,6 +1263,14 @@ function syncEditFoodForm(form, changedName) {
     const input = form.elements[key];
     const base = Number(form.dataset[`base${key[0].toUpperCase()}${key.slice(1)}`] || 0);
     if (input) input.value = fmt(base * k, key === "kcal" ? 1 : 1);
+  });
+}
+
+function syncChoiceSearch(input) {
+  const panel = input.closest(".choice-panel");
+  const q = input.value.trim().toLowerCase();
+  panel?.querySelectorAll(".choice-row").forEach((row) => {
+    row.hidden = q && !String(row.dataset.choiceRow || "").includes(q);
   });
 }
 
