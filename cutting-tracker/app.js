@@ -2,6 +2,7 @@ const STORE_KEY = "cuttingTracker.v9";
 const BACKUP_STORE_KEY = "cuttingTracker.backup.v9";
 const LEGACY_STORE_KEYS = ["cuttingTracker.v8", "cuttingTracker.v7", "cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
+const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 72, dailyActivityFactor: 1.34 };
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -532,6 +533,41 @@ function exerciseTotal(p = plan()) {
   return p.exercises.reduce((sum, ex) => sum + exerciseKcal(ex), 0);
 }
 
+function bodyWeightForDate(date = state.date) {
+  const exact = Number(state.store.records?.[date]?.body?.weight || 0);
+  if (exact > 0) return exact;
+  const prior = Object.entries(state.store.records || {})
+    .filter(([d, r]) => d <= date && Number(r.body?.weight || 0) > 0)
+    .sort(([a], [b]) => b.localeCompare(a))[0];
+  return prior ? Number(prior[1].body.weight) : USER_PROFILE.referenceWeightKg;
+}
+
+function bmrForWeight(weightKg = USER_PROFILE.referenceWeightKg) {
+  const sexOffset = USER_PROFILE.sex === "male" ? 5 : -161;
+  return 10 * weightKg + 6.25 * USER_PROFILE.heightCm - 5 * USER_PROFILE.age + sexOffset;
+}
+
+function baseBurn(date = state.date) {
+  return bmrForWeight(bodyWeightForDate(date)) * USER_PROFILE.dailyActivityFactor;
+}
+
+function dynamicExerciseTotal(p = plan(), date = state.date) {
+  const weightScale = bodyWeightForDate(date) / USER_PROFILE.referenceWeightKg;
+  return exerciseTotal(p) * weightScale;
+}
+
+function dailyTdee(p = plan(), date = state.date) {
+  return baseBurn(date) + dynamicExerciseTotal(p, date);
+}
+
+function calorieTarget(p = plan(), date = state.date) {
+  return plannedTotals(p).kcal;
+}
+
+function targetDeficit(p = plan(), date = state.date) {
+  return dailyTdee(p, date) - calorieTarget(p, date);
+}
+
 function plan(date = state.date) {
   return state.store.plans[date] || createPlan(date);
 }
@@ -610,10 +646,10 @@ function weekStats() {
     const eaten = eatenTotals(p, r);
     acc.plannedKcal += planned.kcal;
     acc.eatenKcal += eaten.kcal;
-    const exercise = exerciseTotal(p);
-    acc.burn += p.base + exercise;
-    acc.plannedDeficit += p.base + exercise - planned.kcal;
-    acc.actualDeficit += p.base + exercise - eaten.kcal;
+    const burn = dailyTdee(p, date);
+    acc.burn += burn;
+    acc.plannedDeficit += burn - planned.kcal;
+    acc.actualDeficit += burn - eaten.kcal;
     acc.water += r.waterMl || 0;
     acc.waterTarget += p.waterTarget;
     acc.exerciseDone += Object.values(r.exercises || {}).filter(Boolean).length;
@@ -693,9 +729,13 @@ const VIEWS = {
     const planned = plannedTotals(p);
     const eaten = eatenTotals(p, r);
     const week = weekStats();
-    const burn = p.base + exerciseTotal(p);
+    const burn = dailyTdee(p);
     const plannedDeficit = burn - planned.kcal;
-    const remainingKcal = burn - eaten.kcal;
+    const actualDeficit = burn - eaten.kcal;
+    const targetRemainingKcal = planned.kcal - eaten.kcal;
+    const base = baseBurn();
+    const exercise = dynamicExerciseTotal(p);
+    const weight = bodyWeightForDate();
     const foodItems = p.meals.flatMap((m) => m.items);
     const foodDone = foodItems.filter((item) => r.foods[item.id]).length;
     const exerciseDone = p.exercises.filter((ex) => r.exercises[ex.id]).length;
@@ -713,14 +753,15 @@ const VIEWS = {
       </section>
 
       <section class="score-panel">
-        <div class="score-main ${remainingKcal >= 0 ? "good" : "bad"}">
-          <span>当前热量余量</span>
-          <strong>${fmt(remainingKcal)}</strong>
-          <small>计划缺口 ${fmt(plannedDeficit)} kcal</small>
+        <div class="score-main ${targetRemainingKcal >= 0 ? "good" : "bad"}">
+          <span>目标剩余可吃</span>
+          <strong>${fmt(targetRemainingKcal)}</strong>
+          <small>TDEE ${fmt(burn)} kcal · 目标缺口 ${fmt(plannedDeficit)} kcal</small>
         </div>
         <div class="score-side">
           <b>${fmt(eaten.kcal)}</b><span>已吃 / 目标 ${fmt(planned.kcal)}</span>
-          <b>${fmt(r.waterMl)}</b><span>饮水 / 目标 ${p.waterTarget}ml</span>
+          <b>${fmt(actualDeficit)}</b><span>当前实际缺口</span>
+          <b>${fmt(base)} + ${fmt(exercise)}</b><span>日常 + 训练 · ${fmt(weight, 1)}kg</span>
         </div>
       </section>
 
@@ -828,7 +869,7 @@ const VIEWS = {
         </form>
       </section>
       <section class="panel">
-        <div class="section-title"><h2>排便记录</h2><small>可每天一次</small></div>
+        <div class="section-title"><h2>排便记录</h2><small>${stoolSummary(s)}</small></div>
         <form id="stoolForm" class="form-grid">
           <label class="switch-row span-2"><input name="done" type="checkbox" ${s.done ? "checked" : ""} /> 今天已排便</label>
           ${selectField("time", "时间", ["", "上午", "下午", "晚上"], s.time || "")}
@@ -836,6 +877,10 @@ const VIEWS = {
           ${field("stoolNote", "备注", s.note || "", "比如偏干/偏稀", "span-2")}
           <button class="primary-button span-2" type="submit">保存排便记录</button>
         </form>
+      </section>
+      <section class="panel">
+        <div class="section-title"><h2>排便历史</h2><small>最近30天</small></div>
+        <div class="library-list">${stoolHistoryRows()}</div>
       </section>
       <section class="panel">
         <div class="section-title"><h2>趋势</h2><small>体重 / 体脂</small></div>
@@ -873,6 +918,26 @@ function unfinishedList(p, r) {
 
 function statusRow(title, detail, done) {
   return `<div class="status-row ${done ? "done" : "todo"}"><span></span><div><b>${title}</b><small>${detail}</small></div></div>`;
+}
+
+function stoolSummary(s = {}) {
+  if (!s.done && !s.time && !s.shape && !s.note) return "未记录";
+  return `${s.done ? "已记录" : "已填写"}${s.time ? ` · ${s.time}` : ""}${s.shape ? ` · ${s.shape}` : ""}`;
+}
+
+function stoolHistoryRows() {
+  const rows = Object.entries(state.store.records || {})
+    .filter(([, r]) => r.stool?.done || r.stool?.time || r.stool?.shape || r.stool?.note)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 30)
+    .map(([date, r]) => {
+      const s = r.stool || {};
+      return `<div class="library-row stool-history-row">
+        <b>${date} · ${dayName(date)}</b>
+        <small>${stoolSummary(s)}${s.note ? ` · ${esc(s.note)}` : ""}</small>
+      </div>`;
+    });
+  return rows.length ? rows.join("") : `<p class="empty compact">还没有排便历史。保存一次后会显示在这里。</p>`;
 }
 
 function taskButton(type, id, done, title, detail, badge) {
@@ -1401,7 +1466,10 @@ document.addEventListener("submit", (e) => {
     record().body = { weight: data.get("weight") || "", bodyFat: data.get("bodyFat") || "", waist: data.get("waist") || "", note: data.get("note") || "" };
   }
   if (e.target.id === "stoolForm") {
-    record().stool = { done: data.get("done") === "on", time: data.get("time") || "", shape: data.get("shape") || "", note: data.get("stoolNote") || "" };
+    const time = data.get("time") || "";
+    const shape = data.get("shape") || "";
+    const note = data.get("stoolNote") || "";
+    record().stool = { done: data.get("done") === "on" || !!time || !!shape || !!note, time, shape, note };
   }
   if (e.target.id === "addFoodForm") {
     const p = editablePlan();
@@ -1792,7 +1860,7 @@ function exportRows() {
     const r = readRecord(date);
     const planned = plannedTotals(p);
     const eaten = eatenTotals(p, r);
-    const burn = p.base + exerciseTotal(p);
+    const burn = dailyTdee(p, date);
     summary.push([date, p.day, p.title, rnd(planned.kcal), rnd(eaten.kcal), burn, rnd(burn - planned.kcal), rnd(burn - eaten.kcal), r.waterMl || 0, p.waterTarget, r.stool?.done ? "是" : "否", r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || ""]);
     p.meals.forEach((m) => m.items.forEach((item) => {
       const macro = foodMacro(item);
