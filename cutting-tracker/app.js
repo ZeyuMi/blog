@@ -5,6 +5,7 @@ const OLD_STORE_KEY = "cuttingTracker.v1";
 const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 72, dailyActivityFactor: 1.34 };
 const CALORIE_RULES = { normalDeficit: 500, saturdayOver: 1000 };
 const MACRO_RULES = { trainingProteinPerKg: 2.2, restProteinPerKg: 2.0, normalFatPerKg: 0.7, saturdayFatPerKg: 1.0 };
+const FAT_RANGE_RULES = { normalMinPerKg: 0.6, normalMaxPerKg: 0.85, saturdayMinPerKg: 0.8, saturdayMaxPerKg: 1.2 };
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -658,6 +659,15 @@ function nutritionTargets(p = plan(), date = state.date) {
   return { kcal, p: protein, c: carbs, f: fat };
 }
 
+function macroGuidance(p = plan(), date = state.date) {
+  const target = nutritionTargets(p, date);
+  const weight = bodyWeightForDate(date);
+  const saturday = templateIndex(date) === 5;
+  const fatMin = weight * (saturday ? FAT_RANGE_RULES.saturdayMinPerKg : FAT_RANGE_RULES.normalMinPerKg);
+  const fatMax = weight * (saturday ? FAT_RANGE_RULES.saturdayMaxPerKg : FAT_RANGE_RULES.normalMaxPerKg);
+  return { ...target, proteinMin: target.p, fatMin, fatMax, carbCap: target.c };
+}
+
 function plan(date = state.date) {
   return state.store.plans[date] || createPlan(date);
 }
@@ -880,7 +890,7 @@ const VIEWS = {
   today() {
     const p = plan();
     const r = readRecord();
-    const planned = nutritionTargets(p);
+    const planned = macroGuidance(p);
     const eaten = eatenTotals(p, r);
     const week = weekStats();
     const burn = dailyTdee(p);
@@ -934,11 +944,11 @@ const VIEWS = {
       </section>
 
       <section class="panel">
-        <div class="section-title"><h2>宏量目标</h2><small>已吃 / 保肌目标</small></div>
-        ${macroLine("热量", eaten.kcal, planned.kcal, "kcal")}
-        ${macroLine("蛋白", eaten.p, planned.p, "g")}
-        ${macroLine("碳水", eaten.c, planned.c, "g")}
-        ${macroLine("脂肪", eaten.f, planned.f, "g")}
+        <div class="section-title"><h2>宏量目标</h2><small>蛋白达标 · 脂肪区间 · 碳水上限</small></div>
+        ${macroLine("热量", eaten.kcal, planned.kcal, "kcal", { note: `TDEE ${fmt(burn)} kcal，目标缺口 ${fmt(targetDeficit(p))} kcal` })}
+        ${macroLine("蛋白", eaten.p, planned.p, "g", { targetText: `>= ${fmt(planned.proteinMin, 1)} g`, note: "优先吃够，保肌核心指标" })}
+        ${macroLine("脂肪", eaten.f, planned.fatMax, "g", { targetText: `${fmt(planned.fatMin, 1)}-${fmt(planned.fatMax, 1)} g`, note: "建议区间，不用刻意压太低" })}
+        ${macroLine("碳水", eaten.c, planned.carbCap, "g", { targetText: `<= ${fmt(planned.carbCap, 1)} g`, note: "剩余热量额度，不是必须吃满" })}
       </section>
 
       <section class="panel">
@@ -1074,10 +1084,13 @@ function miniMetric(label, value, tone) {
   return `<div class="mini ${tone}"><span>${label}</span><b>${value}</b></div>`;
 }
 
-function macroLine(label, actual, target, unit) {
+function macroLine(label, actual, target, unit, options = {}) {
+  const decimals = unit === "kcal" ? 0 : 1;
+  const targetText = options.targetText || `${fmt(target, decimals)} ${unit}`;
   return `<div class="macro-line">
-    <div><b>${label}</b><span>${fmt(actual, unit === "kcal" ? 0 : 1)} / ${fmt(target, unit === "kcal" ? 0 : 1)} ${unit}</span></div>
+    <div><b>${label}</b><span>${fmt(actual, decimals)} / ${targetText}</span></div>
     <div class="progress"><span class="progress-fill" style="width:${pct(actual, target)}%"></span></div>
+    ${options.note ? `<em>${options.note}</em>` : ""}
   </div>`;
 }
 
@@ -1107,16 +1120,22 @@ function macroEnergySplit(m) {
 }
 
 function nutritionOverviewPanel(title, p = plan(), r = readRecord()) {
-  const target = nutritionTargets(p);
+  const target = macroGuidance(p);
   const eaten = eatenTotals(p, r);
   const items = eatenItems(p, r);
   const kinds = foodKindCount(items);
   const split = macroEnergySplit(eaten);
+  const proteinLeft = Math.max(0, target.proteinMin - eaten.p);
+  const carbLeft = Math.max(0, target.carbCap - eaten.c);
+  const fatTone = eaten.f >= target.fatMin && eaten.f <= target.fatMax ? "green" : eaten.f > target.fatMax ? "red" : "amber";
   return `<section class="panel overview-panel">
     <div class="section-title"><h2>${title}</h2><small>${items.length} 个食物 · ${fmtKinds(kinds)} 种食材</small></div>
     <div class="overview-grid">
       ${miniMetric("已吃/目标", `${fmt(eaten.kcal)} / ${fmt(target.kcal)} kcal`, eaten.kcal <= target.kcal ? "green" : "red")}
       ${miniMetric("食材种类", `${fmtKinds(kinds)} 种`, kinds >= 6 ? "green" : kinds >= 3 ? "blue" : "amber")}
+      ${miniMetric("蛋白还差", `${fmt(proteinLeft, 1)} g`, proteinLeft <= 10 ? "green" : "amber")}
+      ${miniMetric("碳水可用", `${fmt(carbLeft, 1)} g`, eaten.c <= target.carbCap ? "blue" : "red")}
+      ${miniMetric("脂肪区间", `${fmt(eaten.f, 1)} / ${fmt(target.fatMin, 1)}-${fmt(target.fatMax, 1)} g`, fatTone)}
     </div>
     ${macroSplitBar(split)}
     <div class="macro-ratio-grid">

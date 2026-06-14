@@ -392,6 +392,13 @@ h1 { font-size: 27px; line-height: 1.08; }
   gap: 10px;
 }
 
+.macro-line em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
 .progress {
   height: 9px;
   overflow: hidden;
