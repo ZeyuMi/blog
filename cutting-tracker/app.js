@@ -4,6 +4,7 @@ const LEGACY_STORE_KEYS = ["cuttingTracker.v8", "cuttingTracker.v7", "cuttingTra
 const OLD_STORE_KEY = "cuttingTracker.v1";
 const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 72, dailyActivityFactor: 1.34 };
 const CALORIE_RULES = { normalDeficit: 500, saturdayOver: 1000 };
+const MACRO_RULES = { trainingProteinPerKg: 2.2, restProteinPerKg: 2.0, normalFatPerKg: 0.7, saturdayFatPerKg: 1.0 };
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -121,8 +122,8 @@ const WEEK_TEMPLATE = [
     meals: [
       ["早餐", [["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30], ["盒马无糖无脂酸奶", 100]]],
       ["午餐", [["超级碗果木鸡胸", 120], ["超级碗谷物饭半份", 1], ["沙拉蔬菜", 200], ["熟菠菜", 1], ["熟鸡蛋", 1], ["熟虾", 6]]],
-      ["加餐", [["盒马即食炙烤鸡胸肉条", 120], ["有机燕麦", 30]]],
-      ["晚餐", [["三文鱼", 100], ["盒马糙米饭团", 120], ["沙拉蔬菜", 200], ["混合坚果", 6]]],
+      ["加餐", [["盒马即食炙烤鸡胸肉条", 120], ["有机燕麦", 30], ["即食玉米", 150]]],
+      ["晚餐", [["三文鱼", 100], ["盒马糙米饭团", 120], ["便利店饭团", 100], ["沙拉蔬菜", 200], ["混合坚果", 6]]],
     ],
   },
   {
@@ -141,8 +142,8 @@ const WEEK_TEMPLATE = [
     meals: [
       ["早餐", [["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30], ["盒马无糖无脂酸奶", 100]]],
       ["午餐", [["超级碗果木鸡胸", 120], ["超级碗谷物饭半份", 1], ["沙拉蔬菜", 200], ["熟菠菜", 1], ["熟鸡蛋", 1], ["熟虾", 6]]],
-      ["加餐", [["盒马即食炙烤鸡胸肉条", 120], ["有机燕麦", 25]]],
-      ["晚餐", [["盒马烤蔬牛肉三色糙米能量碗", 280], ["沙拉蔬菜", 200], ["混合坚果", 4]]],
+      ["加餐", [["盒马即食炙烤鸡胸肉条", 120], ["有机燕麦", 25], ["盒马无糖无脂酸奶", 100]]],
+      ["晚餐", [["盒马烤蔬牛肉三色糙米能量碗", 280], ["即食玉米", 150], ["盒马糙米饭团", 100], ["沙拉蔬菜", 200], ["混合坚果", 4]]],
     ],
   },
   {
@@ -167,8 +168,8 @@ const WEEK_TEMPLATE = [
     meals: [
       ["早餐", [["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30], ["盒马无糖无脂酸奶", 100]]],
       ["午餐", [["超级碗果木鸡胸", 120], ["超级碗谷物饭半份", 1], ["沙拉蔬菜", 200], ["熟菠菜", 1], ["熟鸡蛋", 1], ["熟虾", 6]]],
-      ["加餐", [["盒马即食炙烤鸡胸肉条", 120], ["便利店饭团", 120]]],
-      ["晚餐", [["金枪鱼罐头(水浸)", 100], ["全麦面包", 80], ["即食玉米", 150], ["沙拉蔬菜", 200]]],
+      ["加餐", [["盒马即食炙烤鸡胸肉条", 120], ["便利店饭团", 120], ["混合坚果", 6]]],
+      ["晚餐", [["金枪鱼罐头(水浸)", 100], ["全麦面包", 80], ["即食玉米", 150], ["沙拉蔬菜", 200], ["盒马无糖无脂酸奶", 100]]],
     ],
   },
   {
@@ -180,8 +181,8 @@ const WEEK_TEMPLATE = [
     meals: [
       ["早餐", [["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30], ["盒马无糖无脂酸奶", 100]]],
       ["午餐", [["超级碗果木鸡胸", 120], ["超级碗谷物饭半份", 1], ["沙拉蔬菜", 200], ["熟菠菜", 1], ["熟鸡蛋", 1], ["熟虾", 6]]],
-      ["加餐", [["卤牛肉", 100], ["有机燕麦", 30], ["盒马无糖无脂酸奶", 100]]],
-      ["晚餐", [["三文鱼", 100], ["便利店饭团", 120], ["沙拉蔬菜", 200], ["混合坚果", 4]]],
+      ["加餐", [["卤牛肉", 100], ["有机燕麦", 30], ["盒马无糖无脂酸奶", 100], ["即食玉米", 150]]],
+      ["晚餐", [["三文鱼", 100], ["便利店饭团", 120], ["盒马糙米饭团", 80], ["沙拉蔬菜", 200], ["混合坚果", 4]]],
     ],
   },
   {
@@ -206,8 +207,8 @@ const WEEK_TEMPLATE = [
     meals: [
       ["早餐", [["香蕉", 120], ["水煮鸡蛋", 50], ["分离乳清蛋白粉", 30], ["盒马无糖无脂酸奶", 100]]],
       ["午餐", [["盒马烤蔬牛肉三色糙米能量碗", 280], ["沙拉蔬菜", 200], ["盒马即食炙烤鸡胸肉条", 120]]],
-      ["加餐", [["卤牛肉", 100], ["有机燕麦", 30], ["盒马无糖无脂酸奶", 100]]],
-      ["晚餐", [["卤牛肉", 150], ["盒马糙米饭团", 120], ["即食玉米", 150], ["沙拉蔬菜", 200]]],
+      ["加餐", [["卤牛肉", 100], ["有机燕麦", 30], ["盒马无糖无脂酸奶", 100], ["香蕉", 80]]],
+      ["晚餐", [["卤牛肉", 150], ["盒马糙米饭团", 120], ["便利店饭团", 80], ["即食玉米", 150], ["沙拉蔬菜", 200]]],
     ],
   },
 ];
@@ -648,8 +649,13 @@ function targetDeficit(p = plan(), date = state.date) {
 }
 
 function nutritionTargets(p = plan(), date = state.date) {
-  const planned = plannedTotals(p);
-  return { ...planned, kcal: calorieTarget(p, date) };
+  const kcal = calorieTarget(p, date);
+  const weight = bodyWeightForDate(date);
+  const trainingDay = dynamicExerciseTotal(p, date) > 0;
+  const protein = weight * (trainingDay ? MACRO_RULES.trainingProteinPerKg : MACRO_RULES.restProteinPerKg);
+  const fat = weight * (templateIndex(date) === 5 ? MACRO_RULES.saturdayFatPerKg : MACRO_RULES.normalFatPerKg);
+  const carbs = Math.max(0, (kcal - protein * 4 - fat * 9) / 4);
+  return { kcal, p: protein, c: carbs, f: fat };
 }
 
 function plan(date = state.date) {
@@ -928,7 +934,7 @@ const VIEWS = {
       </section>
 
       <section class="panel">
-        <div class="section-title"><h2>宏量目标</h2><small>已吃 / 计划</small></div>
+        <div class="section-title"><h2>宏量目标</h2><small>已吃 / 保肌目标</small></div>
         ${macroLine("热量", eaten.kcal, planned.kcal, "kcal")}
         ${macroLine("蛋白", eaten.p, planned.p, "g")}
         ${macroLine("碳水", eaten.c, planned.c, "g")}
@@ -2213,7 +2219,7 @@ function downloadBlob(blob, filename) {
 
 function exportRows() {
   const dates = Object.keys({ ...Object.fromEntries(weekDates().map((d) => [d, true])), ...state.store.records, ...state.store.plans }).sort();
-  const summary = [["日期", "星期", "训练", "计划摄入", "已吃", "总消耗", "计划缺口", "实际缺口", "饮水", "饮水目标", "排便", "体重", "体脂", "腰围"]];
+  const summary = [["日期", "星期", "训练", "目标摄入", "已吃", "总消耗", "计划缺口", "实际缺口", "饮水", "饮水目标", "排便", "体重", "体脂", "腰围"]];
   const foodRows = [["日期", "餐次", "食物", "数量", "单位", "热量", "蛋白", "碳水", "脂肪", "食材种类数", "完成"]];
   const trainRows = [["日期", "训练", "动作", "组数", "每组热量", "总热量", "备注", "完成"]];
   const bodyRows = [["日期", "体重", "体脂", "腰围", "备注"]];
