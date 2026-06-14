@@ -316,6 +316,67 @@ h1 { font-size: 27px; line-height: 1.08; }
 .mini.blue { background: var(--blue-soft); border-color: #c1ddea; }
 .mini.amber { background: var(--amber-soft); border-color: #ead09c; }
 
+.overview-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-panel .section-title {
+  margin-bottom: 0;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.macro-split {
+  height: 14px;
+  display: flex;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5ecef;
+}
+
+.macro-split span {
+  display: block;
+  min-width: 0;
+  height: 100%;
+}
+
+.macro-split .carb { background: var(--blue); }
+.macro-split .protein { background: var(--green); }
+.macro-split .fat { background: var(--amber); }
+
+.empty-split span {
+  width: 100%;
+  background: #dfe8eb;
+}
+
+.macro-ratio-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.macro-ratio-grid span {
+  min-height: 46px;
+  padding: 9px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfe;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.macro-ratio-grid b {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+}
+
 .macro-line {
   display: grid;
   gap: 7px;
@@ -891,4 +952,6 @@ canvas {
   .estimate-actions { grid-template-columns: 1fr; }
   .choice-row { grid-template-columns: 1fr; }
   .tab { font-size: 10px; }
+  .overview-grid { grid-template-columns: 1fr; }
+  .macro-ratio-grid { grid-template-columns: 1fr; }
 }

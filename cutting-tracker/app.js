@@ -553,8 +553,12 @@ function baseBurn(date = state.date) {
 }
 
 function dynamicExerciseTotal(p = plan(), date = state.date) {
+  return p.exercises.reduce((sum, ex) => sum + dynamicExerciseKcal(ex, date), 0);
+}
+
+function dynamicExerciseKcal(ex, date = state.date) {
   const weightScale = bodyWeightForDate(date) / USER_PROFILE.referenceWeightKg;
-  return exerciseTotal(p) * weightScale;
+  return exerciseKcal(ex) * weightScale;
 }
 
 function dailyTdee(p = plan(), date = state.date) {
@@ -776,6 +780,8 @@ const VIEWS = {
         </div>
       </section>
 
+      ${nutritionOverviewPanel("今日摄入构成", p, r)}
+
       <section class="panel">
         <div class="section-title"><h2>今日执行</h2><small>${state.date.slice(5)} · ${p.title}</small></div>
         <div class="metric-grid">
@@ -806,6 +812,7 @@ const VIEWS = {
     const r = readRecord();
     const exerciseOptions = exerciseNames().map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
     return html(`<div class="stack">
+      ${trainingOverviewPanel(p, r)}
       <section class="panel">
         <div class="section-title"><h2>${p.title}</h2><small>估算 ${fmt(exerciseTotal(p))} kcal</small></div>
         <div class="task-list">
@@ -829,6 +836,7 @@ const VIEWS = {
     const p = plan();
     const r = readRecord();
     return html(`<div class="stack">
+      ${nutritionOverviewPanel("今日饮食概览", p, r)}
       ${p.meals.map((meal) => mealCard(meal, r)).join("")}
       ${addFoodPanel(p)}
     </div>`);
@@ -916,6 +924,78 @@ function macroLine(label, actual, target, unit) {
     <div><b>${label}</b><span>${fmt(actual, unit === "kcal" ? 0 : 1)} / ${fmt(target, unit === "kcal" ? 0 : 1)} ${unit}</span></div>
     <div class="progress"><span class="progress-fill" style="width:${pct(actual, target)}%"></span></div>
   </div>`;
+}
+
+function eatenItems(p = plan(), r = readRecord()) {
+  return p.meals.flatMap((m) => m.items).filter((item) => r.foods[item.id]);
+}
+
+function foodKindCount(items) {
+  return new Set(items.map((item) => item.food || item.name).filter(Boolean)).size;
+}
+
+function macroEnergySplit(m) {
+  const p = Number(m.p || 0) * 4;
+  const c = Number(m.c || 0) * 4;
+  const f = Number(m.f || 0) * 9;
+  const total = p + c + f;
+  return {
+    p: total ? (p / total) * 100 : 0,
+    c: total ? (c / total) * 100 : 0,
+    f: total ? (f / total) * 100 : 0,
+  };
+}
+
+function nutritionOverviewPanel(title, p = plan(), r = readRecord()) {
+  const target = nutritionTargets(p);
+  const eaten = eatenTotals(p, r);
+  const items = eatenItems(p, r);
+  const kinds = foodKindCount(items);
+  const split = macroEnergySplit(eaten);
+  return `<section class="panel overview-panel">
+    <div class="section-title"><h2>${title}</h2><small>${items.length} 个食物 · ${kinds} 种食材</small></div>
+    <div class="overview-grid">
+      ${miniMetric("已吃/目标", `${fmt(eaten.kcal)} / ${fmt(target.kcal)} kcal`, eaten.kcal <= target.kcal ? "green" : "red")}
+      ${miniMetric("食材种类", `${kinds} 种`, kinds >= 6 ? "green" : kinds >= 3 ? "blue" : "amber")}
+    </div>
+    ${macroSplitBar(split)}
+    <div class="macro-ratio-grid">
+      <span><b>${fmt(split.c)}%</b> 碳水 · ${fmt(eaten.c, 1)}g</span>
+      <span><b>${fmt(split.p)}%</b> 蛋白 · ${fmt(eaten.p, 1)}g</span>
+      <span><b>${fmt(split.f)}%</b> 脂肪 · ${fmt(eaten.f, 1)}g</span>
+    </div>
+  </section>`;
+}
+
+function macroSplitBar(split) {
+  const c = Math.max(0, split.c);
+  const p = Math.max(0, split.p);
+  const f = Math.max(0, split.f);
+  if (c + p + f <= 0) return `<div class="macro-split empty-split"><span></span></div>`;
+  return `<div class="macro-split">
+    <span class="carb" style="width:${c}%"></span>
+    <span class="protein" style="width:${p}%"></span>
+    <span class="fat" style="width:${f}%"></span>
+  </div>`;
+}
+
+function trainingOverviewPanel(p = plan(), r = readRecord()) {
+  const doneExercises = p.exercises.filter((ex) => r.exercises[ex.id]);
+  const doneBurn = doneExercises.reduce((sum, ex) => sum + dynamicExerciseKcal(ex), 0);
+  const planBurn = dynamicExerciseTotal(p);
+  const totalSets = p.exercises.reduce((sum, ex) => sum + Number(ex.sets || 0), 0);
+  const doneSets = doneExercises.reduce((sum, ex) => sum + Number(ex.sets || 0), 0);
+  const cardio = p.exercises.filter((ex) => ex.name.includes("有氧"));
+  const cardioBurn = cardio.reduce((sum, ex) => sum + dynamicExerciseKcal(ex), 0);
+  return `<section class="panel overview-panel">
+    <div class="section-title"><h2>今日训练概览</h2><small>${p.title} · ${fmt(bodyWeightForDate(), 1)}kg估算</small></div>
+    <div class="overview-grid">
+      ${miniMetric("已完成消耗", `${fmt(doneBurn)} / ${fmt(planBurn)} kcal`, doneBurn >= planBurn && planBurn > 0 ? "green" : "blue")}
+      ${miniMetric("动作完成", `${doneExercises.length} / ${p.exercises.length}`, doneExercises.length === p.exercises.length ? "green" : "red")}
+      ${miniMetric("组数完成", `${fmt(doneSets, 1)} / ${fmt(totalSets, 1)} 组`, doneSets >= totalSets && totalSets > 0 ? "green" : "amber")}
+      ${miniMetric("有氧估算", `${fmt(cardioBurn)} kcal`, cardioBurn > 0 ? "blue" : "amber")}
+    </div>
+  </section>`;
 }
 
 function unfinishedList(p, r) {
