@@ -243,16 +243,41 @@ function normalizeStore(store) {
   const deletedExercises = Array.isArray(store.deletedExercises) ? store.deletedExercises : [];
   const exerciseLibrary = { ...EXERCISE_LIBRARY, ...(store.exerciseLibrary || {}) };
   deletedExercises.forEach((name) => delete exerciseLibrary[name]);
+  const records = Object.fromEntries(Object.entries(store.records || {}).map(([date, r]) => [date, normalizeRecord(r)]));
   const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary)]));
   return {
     version: 9,
-    records: store.records || {},
+    records,
     plans,
     foods,
     deletedFoods,
     exerciseLibrary,
     deletedExercises,
   };
+}
+
+function normalizeRecord(r = {}) {
+  const next = {
+    ...emptyRecord(),
+    ...r,
+    foods: r.foods || {},
+    exercises: r.exercises || {},
+    waterSlots: r.waterSlots || {},
+    waterSlotLogs: r.waterSlotLogs || {},
+    waterLogs: Array.isArray(r.waterLogs)
+      ? r.waterLogs.map((log) => ({
+        id: log.id || uid("water"),
+        time: log.time || "--:--",
+        amount: Math.max(0, Number(log.amount || 0)),
+        label: log.label || "饮水",
+      })).filter((log) => log.amount > 0)
+      : [],
+    body: r.body || {},
+    stool: r.stool || {},
+  };
+  if (next.waterLogs.length) next.waterMl = waterLogTotal(next.waterLogs);
+  else next.waterMl = Math.max(0, Number(next.waterMl || 0));
+  return next;
 }
 
 function normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary) {
@@ -311,6 +336,7 @@ function hasRecordData(r = {}) {
     Object.values(r.foods || {}).some(Boolean) ||
     Object.values(r.exercises || {}).some(Boolean) ||
     Object.values(r.waterSlots || {}).some(Boolean) ||
+    (r.waterLogs || []).some((log) => Number(log.amount || 0) > 0) ||
     Number(r.waterMl || 0) > 0 ||
     Object.values(r.body || {}).some((v) => String(v || "").trim()) ||
     r.stool?.done || r.stool?.time || r.stool?.shape || r.stool?.note
@@ -318,7 +344,7 @@ function hasRecordData(r = {}) {
 }
 
 function emptyRecord() {
-  return { foods: {}, exercises: {}, waterSlots: {}, waterMl: 0, body: {}, stool: {} };
+  return { foods: {}, exercises: {}, waterSlots: {}, waterSlotLogs: {}, waterLogs: [], waterMl: 0, body: {}, stool: {} };
 }
 
 function readRecord(date = state.date) {
@@ -664,7 +690,7 @@ function weekStats() {
     acc.burn += burn;
     acc.plannedDeficit += targetDeficit(p, date);
     acc.actualDeficit += burn - eaten.kcal;
-    acc.water += r.waterMl || 0;
+    acc.water += waterTotal(r);
     acc.waterTarget += p.waterTarget;
     acc.exerciseDone += Object.values(r.exercises || {}).filter(Boolean).length;
     acc.exerciseTotal += p.exercises.length;
@@ -673,6 +699,70 @@ function weekStats() {
     acc.stool += r.stool?.done ? 1 : 0;
     return acc;
   }, { plannedKcal: 0, eatenKcal: 0, burn: 0, plannedDeficit: 0, actualDeficit: 0, water: 0, waterTarget: 0, exerciseDone: 0, exerciseTotal: 0, foodDone: 0, foodTotal: 0, stool: 0 });
+}
+
+function waterLogTotal(logs = []) {
+  return logs.reduce((sum, log) => sum + Math.max(0, Number(log.amount || 0)), 0);
+}
+
+function waterTotal(r = readRecord()) {
+  return r.waterLogs?.length ? waterLogTotal(r.waterLogs) : Math.max(0, Number(r.waterMl || 0));
+}
+
+function syncWaterTotal(r) {
+  r.waterMl = r.waterLogs?.length ? waterLogTotal(r.waterLogs) : Math.max(0, Number(r.waterMl || 0));
+  return r.waterMl;
+}
+
+function currentTimeText() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function ensureWaterLogs(r) {
+  if (!Array.isArray(r.waterLogs)) r.waterLogs = [];
+  if (!r.waterLogs.length && Number(r.waterMl || 0) > 0) {
+    r.waterLogs.push({ id: uid("water"), time: "--:--", amount: Number(r.waterMl || 0), label: "旧记录" });
+  }
+  if (!r.waterSlotLogs) r.waterSlotLogs = {};
+  return r.waterLogs;
+}
+
+function addWaterLog(r, amount, label = "饮水", time = currentTimeText()) {
+  const cleanAmount = Math.max(0, Math.round(Number(amount || 0)));
+  if (!cleanAmount) return "";
+  const logs = ensureWaterLogs(r);
+  const id = uid("water");
+  logs.push({ id, time: time || currentTimeText(), amount: cleanAmount, label });
+  syncWaterTotal(r);
+  return id;
+}
+
+function removeWaterLog(r, id) {
+  ensureWaterLogs(r);
+  r.waterLogs = r.waterLogs.filter((log) => log.id !== id);
+  Object.entries(r.waterSlotLogs || {}).forEach(([slot, logId]) => {
+    if (logId === id) delete r.waterSlotLogs[slot];
+  });
+  syncWaterTotal(r);
+}
+
+function subtractWaterAmount(r, amount) {
+  let remaining = Math.max(0, Math.round(Number(amount || 0)));
+  if (!remaining) return;
+  if (!r.waterLogs?.length) {
+    r.waterMl = Math.max(0, (r.waterMl || 0) - remaining);
+    return;
+  }
+  const logs = [...r.waterLogs].reverse();
+  logs.forEach((log) => {
+    if (!remaining) return;
+    const take = Math.min(Number(log.amount || 0), remaining);
+    log.amount = Math.max(0, Number(log.amount || 0) - take);
+    remaining -= take;
+  });
+  r.waterLogs = logs.reverse().filter((log) => Number(log.amount || 0) > 0);
+  syncWaterTotal(r);
 }
 
 function fmt(n, d = 0) {
@@ -754,7 +844,8 @@ const VIEWS = {
     const foodItems = p.meals.flatMap((m) => m.items);
     const foodDone = foodItems.filter((item) => r.foods[item.id]).length;
     const exerciseDone = p.exercises.filter((ex) => r.exercises[ex.id]).length;
-    const waterDone = r.waterMl >= p.waterTarget;
+    const waterNow = waterTotal(r);
+    const waterDone = waterNow >= p.waterTarget;
     const stoolDone = !!r.stool?.done;
     return html(`<div class="stack">
       <section class="panel">
@@ -787,7 +878,7 @@ const VIEWS = {
         <div class="metric-grid">
           ${miniMetric("饮食打卡", `${foodDone}/${foodItems.length}`, foodDone === foodItems.length ? "green" : "red")}
           ${miniMetric("训练打卡", `${exerciseDone}/${p.exercises.length}`, exerciseDone === p.exercises.length ? "green" : "red")}
-          ${miniMetric("饮水", `${fmt(r.waterMl)} / ${p.waterTarget} ml`, waterDone ? "green" : "blue")}
+          ${miniMetric("饮水", `${fmt(waterNow)} / ${p.waterTarget} ml`, waterDone ? "green" : "blue")}
           ${miniMetric("排便", stoolDone ? "已记录" : "未记录", stoolDone ? "green" : "amber")}
         </div>
       </section>
@@ -852,18 +943,32 @@ const VIEWS = {
     const p = plan();
     const r = readRecord();
     const slots = waterSlotsFor(p);
+    const total = waterTotal(r);
     return html(`<div class="stack">
       <section class="score-panel water-score">
-        <div class="score-main"><span>今日饮水</span><strong>${fmt(r.waterMl)}</strong><small>目标 ${p.waterTarget} ml</small></div>
-        <div class="score-side"><b>${fmt(pct(r.waterMl, p.waterTarget))}%</b><span>完成度</span></div>
+        <div class="score-main"><span>今日饮水</span><strong>${fmt(total)}</strong><small>目标 ${p.waterTarget} ml</small></div>
+        <div class="score-side"><b>${fmt(pct(total, p.waterTarget))}%</b><span>完成度</span><b>${waterLogDisplayRows(r).length}</b><span>饮水记录</span></div>
       </section>
       <section class="panel">
+        <div class="section-title"><h2>快速记录</h2><small>点击后自动记录当前时间</small></div>
         <div class="quick-grid">
           <button class="quick-water" data-water-add="250" type="button">+250</button>
           <button class="quick-water" data-water-add="350" type="button">+350</button>
           <button class="quick-water" data-water-add="500" type="button">+500</button>
           <button class="quick-water danger" data-water-reset="1" type="button">清零</button>
         </div>
+      </section>
+      <section class="panel">
+        <div class="section-title"><h2>手动补录</h2><small>可以改时间和水量</small></div>
+        <form id="waterLogForm" class="form-grid">
+          <label class="field"><span>时间</span><input name="time" type="time" value="${currentTimeText()}" /></label>
+          ${field("amount", "水量 ml", "250", "250")}
+          <button class="primary-button span-2" type="submit">记录饮水</button>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="section-title"><h2>当天饮水记录</h2><small>${fmt(total)} / ${p.waterTarget} ml</small></div>
+        <div class="water-log-list">${waterLogRows(r)}</div>
       </section>
       <section class="panel">
         <div class="section-title"><h2>时段打卡</h2><small>未完成红色，完成绿色</small></div>
@@ -1001,7 +1106,8 @@ function trainingOverviewPanel(p = plan(), r = readRecord()) {
 function unfinishedList(p, r) {
   const exercises = p.exercises.filter((ex) => !r.exercises[ex.id]).slice(0, 3).map((ex) => statusRow(ex.name, `${ex.sets || 0}组 · ${fmt(exerciseKcal(ex))} kcal`, false));
   const foods = p.meals.flatMap((m) => m.items.map((item) => ({ ...item, meal: m.name }))).filter((item) => !r.foods[item.id]).slice(0, 4).map((item) => statusRow(`${item.meal}: ${item.food}`, `${item.amount}${item.unit}`, false));
-  const water = r.waterMl >= p.waterTarget ? [] : [statusRow("饮水", `还差 ${fmt(p.waterTarget - (r.waterMl || 0))} ml`, false)];
+  const waterNow = waterTotal(r);
+  const water = waterNow >= p.waterTarget ? [] : [statusRow("饮水", `还差 ${fmt(p.waterTarget - waterNow)} ml`, false)];
   const stool = r.stool?.done ? [] : [statusRow("排便", "今天还没记录", false)];
   const rows = [...exercises, ...foods, ...water, ...stool];
   return rows.length ? rows.join("") : `<p class="empty">今天目前都完成了。</p>`;
@@ -1029,6 +1135,22 @@ function stoolHistoryRows() {
       </div>`;
     });
   return rows.length ? rows.join("") : `<p class="empty compact">还没有排便历史。保存一次后会显示在这里。</p>`;
+}
+
+function waterLogDisplayRows(r = readRecord()) {
+  if (r.waterLogs?.length) return [...r.waterLogs].sort((a, b) => String(b.time || "").localeCompare(String(a.time || "")));
+  if (Number(r.waterMl || 0) > 0) return [{ id: "legacy-water", time: "--:--", amount: Number(r.waterMl || 0), label: "旧记录" }];
+  return [];
+}
+
+function waterLogRows(r = readRecord()) {
+  const rows = waterLogDisplayRows(r);
+  if (!rows.length) return `<p class="empty compact">今天还没有饮水记录。点上面的 +250 / +350 / +500 就会自动出现。</p>`;
+  return rows.map((log) => `<div class="water-log-row">
+    <div><b>${esc(log.time || "--:--")}</b><small>${esc(log.label || "饮水")}</small></div>
+    <strong>${fmt(log.amount)} ml</strong>
+    ${log.id === "legacy-water" ? "" : `<button data-delete-water-log="${esc(log.id)}" type="button">删除</button>`}
+  </div>`).join("");
 }
 
 function taskButton(type, id, done, title, detail, badge) {
@@ -1566,13 +1688,23 @@ document.addEventListener("click", async (e) => {
     if (type === "food") r.foods[id] = !r.foods[id];
     if (type === "waterSlot") {
       r.waterSlots[id] = !r.waterSlots[id];
-      r.waterMl = Math.max(0, (r.waterMl || 0) + (r.waterSlots[id] ? Number(amount) : -Number(amount)));
+      if (r.waterSlots[id]) {
+        const slot = waterSlotsFor(plan())[Number(id)];
+        const logId = addWaterLog(r, Number(amount), slot?.[0] || "时段打卡");
+        if (logId) r.waterSlotLogs[id] = logId;
+      } else if (r.waterSlotLogs?.[id]) {
+        removeWaterLog(r, r.waterSlotLogs[id]);
+      } else {
+        subtractWaterAmount(r, Number(amount));
+      }
     }
     saveStore(); renderPreservingScroll(); return;
   }
   const addWater = e.target.closest("[data-water-add]");
-  if (addWater) { const r = record(); r.waterMl = (r.waterMl || 0) + Number(addWater.dataset.waterAdd); saveStore(); renderPreservingScroll(); return; }
-  if (e.target.closest("[data-water-reset]")) { const r = record(); r.waterMl = 0; r.waterSlots = {}; saveStore(); renderPreservingScroll(); return; }
+  if (addWater) { const r = record(); addWaterLog(r, Number(addWater.dataset.waterAdd), "快速记录"); saveStore(); renderPreservingScroll(); return; }
+  if (e.target.closest("[data-water-reset]")) { const r = record(); r.waterMl = 0; r.waterSlots = {}; r.waterSlotLogs = {}; r.waterLogs = []; saveStore(); renderPreservingScroll(); return; }
+  const deleteWaterLog = e.target.closest("[data-delete-water-log]");
+  if (deleteWaterLog) { const r = record(); removeWaterLog(r, deleteWaterLog.dataset.deleteWaterLog); saveStore(); renderPreservingScroll(); return; }
   const adjust = e.target.closest("[data-adjust]");
   if (adjust) {
     const [mealId, itemId, delta] = adjust.dataset.adjust.split(":");
@@ -1638,6 +1770,10 @@ document.addEventListener("submit", (e) => {
     const shape = data.get("shape") || "";
     const note = data.get("stoolNote") || "";
     record().stool = { done: data.get("done") === "on" || !!time || !!shape || !!note, time, shape, note };
+  }
+  if (e.target.id === "waterLogForm") {
+    const r = record();
+    addWaterLog(r, Number(data.get("amount") || 0), "手动补录", data.get("time") || currentTimeText());
   }
   if (e.target.id === "addFoodForm") {
     const p = editablePlan();
@@ -2022,14 +2158,14 @@ function exportRows() {
   const trainRows = [["日期", "训练", "动作", "组数", "每组热量", "总热量", "备注", "完成"]];
   const bodyRows = [["日期", "体重", "体脂", "腰围", "备注"]];
   const stoolRows = [["日期", "是否排便", "时间", "形状", "备注"]];
-  const waterRows = [["日期", "饮水ml", "目标ml"]];
+  const waterRows = [["日期", "时间", "饮水ml", "来源", "目标ml"]];
   for (const date of dates) {
     const p = plan(date);
     const r = readRecord(date);
     const planned = nutritionTargets(p, date);
     const eaten = eatenTotals(p, r);
     const burn = dailyTdee(p, date);
-    summary.push([date, p.day, p.title, rnd(planned.kcal), rnd(eaten.kcal), burn, rnd(targetDeficit(p, date)), rnd(burn - eaten.kcal), r.waterMl || 0, p.waterTarget, r.stool?.done ? "是" : "否", r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || ""]);
+    summary.push([date, p.day, p.title, rnd(planned.kcal), rnd(eaten.kcal), burn, rnd(targetDeficit(p, date)), rnd(burn - eaten.kcal), waterTotal(r), p.waterTarget, r.stool?.done ? "是" : "否", r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || ""]);
     p.meals.forEach((m) => m.items.forEach((item) => {
       const macro = foodMacro(item);
       foodRows.push([date, m.name, item.food || item.name, item.amount, item.unit || "", rnd(macro.kcal), rnd(macro.p), rnd(macro.c), rnd(macro.f), r.foods[item.id] ? "是" : "否"]);
@@ -2037,7 +2173,9 @@ function exportRows() {
     p.exercises.forEach((ex) => trainRows.push([date, p.title, ex.name, ex.sets || 0, rnd(ex.kcalPerSet || 0), rnd(exerciseKcal(ex)), ex.detail || "", r.exercises[ex.id] ? "是" : "否"]));
     bodyRows.push([date, r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || "", r.body?.note || ""]);
     stoolRows.push([date, r.stool?.done ? "是" : "否", r.stool?.time || "", r.stool?.shape || "", r.stool?.note || ""]);
-    waterRows.push([date, r.waterMl || 0, p.waterTarget]);
+    const logs = waterLogDisplayRows(r);
+    if (logs.length) logs.forEach((log) => waterRows.push([date, log.time || "", log.amount || 0, log.label || "", p.waterTarget]));
+    else waterRows.push([date, "", 0, "", p.waterTarget]);
   }
   const foodLib = [["食物", "单位", "热量", "蛋白", "碳水", "脂肪", "计算方式", "备注"], ...Object.entries(state.store.foods).map(([name, f]) => [name, f.unit, f.kcal, f.p, f.c, f.f, f.perUnit ? "每单位" : "每100g/ml", f.note || ""])];
   const exerciseLib = [["动作", "每组热量", "默认备注", "说明"], ...Object.entries(state.store.exerciseLibrary || {}).map(([name, ex]) => [name, ex.kcalPerSet || 0, ex.detail || "", ex.note || ""])];
