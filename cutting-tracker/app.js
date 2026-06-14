@@ -2,6 +2,8 @@ const STORE_KEY = "cuttingTracker.v9";
 const BACKUP_STORE_KEY = "cuttingTracker.backup.v9";
 const LEGACY_STORE_KEYS = ["cuttingTracker.v8", "cuttingTracker.v7", "cuttingTracker.v6", "cuttingTracker.v5", "cuttingTracker.v4", "cuttingTracker.v3", "cuttingTracker.v2", "cuttingTracker.v1"];
 const OLD_STORE_KEY = "cuttingTracker.v1";
+const THEME_KEY = "cuttingTracker.theme";
+const THEMES = ["forest", "night", "mist", "ocean"];
 const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 72, dailyActivityFactor: 1.34 };
 const CALORIE_RULES = { normalDeficit: 500, saturdayOver: 1000 };
 const MACRO_RULES = { trainingProteinPerKg: 2.2, restProteinPerKg: 2.0, normalFatPerKg: 0.7, saturdayFatPerKg: 1.0 };
@@ -230,12 +232,28 @@ const state = {
   tab: "today",
   date: initialDate(),
   store: loadStore(),
+  theme: loadTheme(),
   centerDateOnRender: true,
   estimateMealId: "",
 };
 
 function initialDate() {
   return isoDate(new Date());
+}
+
+function loadTheme() {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return THEMES.includes(value) ? value : "forest";
+  } catch {
+    return "forest";
+  }
+}
+
+function setTheme(theme) {
+  state.theme = THEMES.includes(theme) ? theme : "forest";
+  document.body.dataset.theme = state.theme;
+  try { localStorage.setItem(THEME_KEY, state.theme); } catch {}
 }
 
 function loadStore() {
@@ -808,9 +826,12 @@ function pct(value, target) {
 }
 
 function render(options = {}) {
+  setTheme(state.theme);
   renderWeekbar();
   renderDates();
   document.querySelectorAll(".tab").forEach((btn) => btn.classList.toggle("is-active", btn.dataset.tab === state.tab));
+  const themeSelect = document.getElementById("themeSelect");
+  if (themeSelect) themeSelect.value = state.theme;
   const titles = { today: "概览", training: "训练", meals: "饮食", library: "食物库", water: "饮水", body: "身体" };
   document.getElementById("pageTitle").textContent = `${titles[state.tab]} · ${plan().day}`;
   document.getElementById("dateContext").textContent = dateContextText();
@@ -1987,6 +2008,10 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("change", (e) => {
+  if (e.target.closest("#themeSelect")) {
+    setTheme(e.target.value);
+    return;
+  }
   const form = e.target.closest("#addFoodForm");
   if (form) syncFoodForm(form, e.target.name === "food");
   const estimateForm = e.target.closest(".estimateMealForm");
