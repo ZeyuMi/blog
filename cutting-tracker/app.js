@@ -216,13 +216,6 @@ const WEEK_TEMPLATE = [
 
 const EXERCISE_LIBRARY = buildExerciseLibrary(WEEK_TEMPLATE);
 
-const WATER_SLOTS = {
-  trainCardio: [["起床后", 400], ["训练前", 300], ["训练中", 600], ["午餐前后", 600], ["下午", 700], ["晚餐后", 500]],
-  train: [["起床后", 400], ["训练前", 300], ["训练中", 400], ["午餐前后", 600], ["下午", 700], ["晚餐后", 400]],
-  rest: [["起床后", 400], ["上午", 500], ["午餐前后", 600], ["下午", 600], ["晚餐前后", 300], ["睡前2小时前", 100]],
-  alcohol: [["起床后", 400], ["上午", 500], ["午餐前后", 600], ["下午", 600], ["晚餐/喝酒期间", 500], ["睡前", 400]],
-};
-
 const STOOL_SHAPES = [
   "1型 硬球状",
   "2型 块状香肠",
@@ -380,7 +373,6 @@ function hasRecordData(r = {}) {
   return Boolean(
     Object.values(r.foods || {}).some(Boolean) ||
     Object.values(r.exercises || {}).some(Boolean) ||
-    Object.values(r.waterSlots || {}).some(Boolean) ||
     (r.waterLogs || []).some((log) => Number(log.amount || 0) > 0) ||
     Number(r.waterMl || 0) > 0 ||
     Object.values(r.body || {}).some((v) => String(v || "").trim()) ||
@@ -807,24 +799,6 @@ function removeWaterLog(r, id) {
   syncWaterTotal(r);
 }
 
-function subtractWaterAmount(r, amount) {
-  let remaining = Math.max(0, Math.round(Number(amount || 0)));
-  if (!remaining) return;
-  if (!r.waterLogs?.length) {
-    r.waterMl = Math.max(0, (r.waterMl || 0) - remaining);
-    return;
-  }
-  const logs = [...r.waterLogs].reverse();
-  logs.forEach((log) => {
-    if (!remaining) return;
-    const take = Math.min(Number(log.amount || 0), remaining);
-    log.amount = Math.max(0, Number(log.amount || 0) - take);
-    remaining -= take;
-  });
-  r.waterLogs = logs.reverse().filter((log) => Number(log.amount || 0) > 0);
-  syncWaterTotal(r);
-}
-
 function fmt(n, d = 0) {
   return Number(n || 0).toFixed(d);
 }
@@ -1002,7 +976,6 @@ const VIEWS = {
   water() {
     const p = plan();
     const r = readRecord();
-    const slots = waterSlotsFor(p);
     const total = waterTotal(r);
     return html(`<div class="stack">
       <section class="score-panel water-score">
@@ -1029,10 +1002,6 @@ const VIEWS = {
       <section class="panel">
         <div class="section-title"><h2>当天饮水记录</h2><small>${fmt(total)} / ${p.waterTarget} ml</small></div>
         <div class="water-log-list">${waterLogRows(r)}</div>
-      </section>
-      <section class="panel">
-        <div class="section-title"><h2>时段打卡</h2><small>未完成红色，完成绿色</small></div>
-        <div class="task-list">${slots.map((s, i) => taskButton("waterSlot", `${i}:${s[1]}`, r.waterSlots[i], s[0], `${s[1]} ml`, "水")).join("")}</div>
       </section>
     </div>`);
   },
@@ -1180,10 +1149,8 @@ function trainingOverviewPanel(p = plan(), r = readRecord()) {
 function unfinishedList(p, r) {
   const exercises = p.exercises.filter((ex) => !r.exercises[ex.id]).slice(0, 3).map((ex) => statusRow(ex.name, `${ex.sets || 0}组 · ${fmt(exerciseKcal(ex))} kcal`, false));
   const foods = p.meals.flatMap((m) => m.items.map((item) => ({ ...item, meal: m.name }))).filter((item) => !r.foods[item.id]).slice(0, 4).map((item) => statusRow(`${item.meal}: ${item.food}`, `${item.amount}${item.unit}`, false));
-  const waterNow = waterTotal(r);
-  const water = waterNow >= p.waterTarget ? [] : [statusRow("饮水", `还差 ${fmt(p.waterTarget - waterNow)} ml`, false)];
   const stool = r.stool?.done ? [] : [statusRow("排便", "今天还没记录", false)];
-  const rows = [...exercises, ...foods, ...water, ...stool];
+  const rows = [...exercises, ...foods, ...stool];
   return rows.length ? rows.join("") : `<p class="empty">今天目前都完成了。</p>`;
 }
 
@@ -1583,13 +1550,6 @@ function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function waterSlotsFor(p) {
-  if (p.title.includes("喝酒")) return WATER_SLOTS.alcohol;
-  if (p.title.includes("有氧")) return WATER_SLOTS.trainCardio;
-  if (exerciseTotal(p) > 0) return WATER_SLOTS.train;
-  return WATER_SLOTS.rest;
-}
-
 function drawBodyChart() {
   const canvas = document.getElementById("bodyChart");
   if (!canvas) return;
@@ -1762,21 +1722,9 @@ document.addEventListener("click", async (e) => {
   const check = e.target.closest("[data-check]");
   if (check) {
     const r = record();
-    const [type, id, amount] = check.dataset.check.split(":");
+    const [type, id] = check.dataset.check.split(":");
     if (type === "exercise") r.exercises[id] = !r.exercises[id];
     if (type === "food") r.foods[id] = !r.foods[id];
-    if (type === "waterSlot") {
-      r.waterSlots[id] = !r.waterSlots[id];
-      if (r.waterSlots[id]) {
-        const slot = waterSlotsFor(plan())[Number(id)];
-        const logId = addWaterLog(r, Number(amount), slot?.[0] || "时段打卡");
-        if (logId) r.waterSlotLogs[id] = logId;
-      } else if (r.waterSlotLogs?.[id]) {
-        removeWaterLog(r, r.waterSlotLogs[id]);
-      } else {
-        subtractWaterAmount(r, Number(amount));
-      }
-    }
     saveStore(); renderPreservingScroll(); return;
   }
   const addWater = e.target.closest("[data-water-add]");
