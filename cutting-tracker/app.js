@@ -52,6 +52,32 @@ const FOOD_LIBRARY = {
   "甜品/小吃": { unit: "g", kcal: 300, p: 4, c: 40, f: 13 },
 };
 
+const FOOD_KIND_OVERRIDES = {
+  "分离乳清蛋白粉": 0,
+  "沙拉蔬菜": 5,
+  "混合坚果": 3,
+  "饭团": 2,
+  "盒马糙米饭团": 2,
+  "便利店饭团": 2,
+  "全麦面包": 2,
+  "超级碗谷物饭半份": 3,
+  "超级碗沙拉半份": 5,
+  "盒马烤蔬牛肉三色糙米能量碗": 10,
+  "麦当劳薯角": 2,
+  "麦当劳鸡米花": 2,
+  "紫薯土豆泥蔬菜沙拉": 9,
+  "鸡丝大拌菜": 5,
+  "鸡丝凉面": 4,
+  "象大厨麻酱凉皮": 3,
+  "象大厨麻酱凉皮牛筋面双拼": 4,
+  "放纵餐肉类": 1,
+  "放纵餐主食": 1,
+  "放纵餐蔬菜": 4,
+  "放纵餐酱料/油脂": 1,
+  "甜品/小吃": 2,
+  "威士忌": 0,
+};
+
 const DEFAULT_CHOICE_AMOUNTS = {
   "盒马无糖无脂酸奶": 100,
   "有机燕麦": 30,
@@ -238,8 +264,9 @@ function loadStore() {
 
 function normalizeStore(store) {
   const deletedFoods = Array.isArray(store.deletedFoods) ? store.deletedFoods : [];
-  const foods = { ...FOOD_LIBRARY, ...(store.foods || {}) };
-  deletedFoods.forEach((name) => delete foods[name]);
+  const rawFoods = { ...FOOD_LIBRARY, ...(store.foods || {}) };
+  deletedFoods.forEach((name) => delete rawFoods[name]);
+  const foods = Object.fromEntries(Object.entries(rawFoods).map(([name, f]) => [name, normalizeFoodDef(name, f)]));
   const deletedExercises = Array.isArray(store.deletedExercises) ? store.deletedExercises : [];
   const exerciseLibrary = { ...EXERCISE_LIBRARY, ...(store.exerciseLibrary || {}) };
   deletedExercises.forEach((name) => delete exerciseLibrary[name]);
@@ -280,6 +307,21 @@ function normalizeRecord(r = {}) {
   return next;
 }
 
+function normalizeFoodDef(name, f = {}) {
+  return { ...f, kinds: foodKindValue(name, f) };
+}
+
+function foodKindValue(name, f = {}) {
+  const value = f.kinds ?? f.kindCount ?? f.ingredients ?? FOOD_KIND_OVERRIDES[name] ?? 1;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * 10) / 10) : 1;
+}
+
+function fmtKinds(n) {
+  const value = Number(n || 0);
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary) {
   if (!savedPlan?.meals) return savedPlan;
   const p = JSON.parse(JSON.stringify(savedPlan));
@@ -290,6 +332,7 @@ function normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary) {
         ? { ...item, food: "沙拉蔬菜", amount: 200, unit: "g" }
         : { ...item };
       if (next.custom && !next.baseAmount) next.baseAmount = Number(next.amount || 1);
+      if (next.custom && next.kinds === undefined) next.kinds = foodKindValue(next.food || next.name, next);
       next.unit = foods[next.food]?.unit || next.unit || "g";
       return next;
     });
@@ -359,7 +402,7 @@ function upsertFood(name, food) {
   const cleanName = String(name || "").trim();
   if (!cleanName) return false;
   state.store.deletedFoods = (state.store.deletedFoods || []).filter((item) => item !== cleanName);
-  state.store.foods[cleanName] = food;
+  state.store.foods[cleanName] = normalizeFoodDef(cleanName, food);
   return true;
 }
 
@@ -390,6 +433,7 @@ function deleteFoodFromLibrary(name) {
         item.c = macro.c;
         item.f = macro.f;
         item.baseAmount = item.amount || 1;
+        item.kinds = foodKindValue(name, lib);
       });
     });
   });
@@ -1036,7 +1080,12 @@ function eatenItems(p = plan(), r = readRecord()) {
 }
 
 function foodKindCount(items) {
-  return new Set(items.map((item) => item.food || item.name).filter(Boolean)).size;
+  return items.reduce((sum, item) => sum + itemFoodKinds(item), 0);
+}
+
+function itemFoodKinds(item) {
+  if (item.custom) return foodKindValue(item.food || item.name, item);
+  return foodKindValue(item.food, foodDef(item.food) || {});
 }
 
 function macroEnergySplit(m) {
@@ -1058,10 +1107,10 @@ function nutritionOverviewPanel(title, p = plan(), r = readRecord()) {
   const kinds = foodKindCount(items);
   const split = macroEnergySplit(eaten);
   return `<section class="panel overview-panel">
-    <div class="section-title"><h2>${title}</h2><small>${items.length} 个食物 · ${kinds} 种食材</small></div>
+    <div class="section-title"><h2>${title}</h2><small>${items.length} 个食物 · ${fmtKinds(kinds)} 种食材</small></div>
     <div class="overview-grid">
       ${miniMetric("已吃/目标", `${fmt(eaten.kcal)} / ${fmt(target.kcal)} kcal`, eaten.kcal <= target.kcal ? "green" : "red")}
-      ${miniMetric("食材种类", `${kinds} 种`, kinds >= 6 ? "green" : kinds >= 3 ? "blue" : "amber")}
+      ${miniMetric("食材种类", `${fmtKinds(kinds)} 种`, kinds >= 6 ? "green" : kinds >= 3 ? "blue" : "amber")}
     </div>
     ${macroSplitBar(split)}
     <div class="macro-ratio-grid">
@@ -1205,12 +1254,13 @@ function mealCard(meal, r) {
     <div class="task-list">
       ${meal.items.map((item) => {
         const m = foodMacro(item);
+        const kinds = itemFoodKinds(item);
         const rememberChecked = item.custom ? "" : "checked";
         const step = amountStep(item.unit || "g");
         const baseAmount = Number(item.baseAmount || item.amount || 1);
         return `<div class="food-task ${r.foods[item.id] ? "done" : "todo"}">
           <button class="food-check" data-check="food:${item.id}" type="button"><span class="task-dot"></span></button>
-          <div class="food-main"><b>${item.food || item.name}</b><small>${item.amount}${item.unit || ""} · ${fmt(m.kcal)} kcal · P${fmt(m.p, 1)} C${fmt(m.c, 1)} F${fmt(m.f, 1)}</small></div>
+          <div class="food-main"><b>${item.food || item.name}</b><small>${item.amount}${item.unit || ""} · ${fmt(m.kcal)} kcal · P${fmt(m.p, 1)} C${fmt(m.c, 1)} F${fmt(m.f, 1)} · ${fmtKinds(kinds)}种食材</small></div>
           <div class="food-actions">
             <button data-adjust="${meal.id}:${item.id}:${-step}" type="button">-${step}</button>
             <button data-adjust="${meal.id}:${item.id}:${step}" type="button">+${step}</button>
@@ -1228,6 +1278,7 @@ function mealCard(meal, r) {
               ${field("p", "蛋白 g", fmt(m.p, 1), "25")}
               ${field("c", "碳水 g", fmt(m.c, 1), "40")}
               ${field("f", "脂肪 g", fmt(m.f, 1), "10")}
+              ${field("kinds", "食材种类数", fmtKinds(kinds), "1")}
               <label class="switch-row span-2"><input name="rememberFood" type="checkbox" ${rememberChecked} /> 同步到食物库，以后都用这组数据</label>
               <button class="primary-button" type="submit">保存</button>
             </form>
@@ -1270,7 +1321,7 @@ function choiceRow(meal, food, amount) {
   const macro = scaleMacro(lib, amount);
   const searchText = `${food} ${lib?.note || ""}`.toLowerCase();
   return `<div class="choice-row" data-choice-row="${esc(searchText)}">
-    <div><b>${esc(food)}</b><small>${amount}${unit} · ${fmt(macro.kcal)} kcal · P${fmt(macro.p, 1)} C${fmt(macro.c, 1)} F${fmt(macro.f, 1)}</small></div>
+    <div><b>${esc(food)}</b><small>${amount}${unit} · ${fmt(macro.kcal)} kcal · P${fmt(macro.p, 1)} C${fmt(macro.c, 1)} F${fmt(macro.f, 1)} · ${fmtKinds(foodKindValue(food, lib || {}))}种食材</small></div>
     <button data-choice-meal="${meal.id}" data-choice-food="${esc(food)}" data-choice-amount="${amount}" type="button">加入</button>
   </div>`;
 }
@@ -1304,6 +1355,7 @@ function estimateMealForm(meal) {
         <option value="medium" selected>中等</option>
         <option value="high">多</option>
       </select></label>
+      ${field("kinds", "食材种类数", "3", "比如 3")}
       ${field("note", "备注", "", "比如粉丝多、盘底有油", "span-2")}
     </div>
     <div class="estimate-preview">${estimatePreviewText(preview)}</div>
@@ -1340,6 +1392,7 @@ function addFoodPanel(p) {
           ${field("p", "蛋白质 g", "", "每100g或每单位")}
           ${field("c", "碳水 g", "", "每100g或每单位")}
           ${field("f", "脂肪 g", "", "每100g或每单位")}
+          ${field("kinds", "食材种类数", "1", "比如 1")}
         </div>
       </details>
       <div class="food-preview" id="foodPreview">输入食物和重量后自动计算</div>
@@ -1360,7 +1413,7 @@ function foodLibraryEditor() {
     <details class="nutrition-details add-library-details">
       <summary>添加新食物</summary>
       <form id="addLibraryFoodForm" class="form-grid library-food-form">
-        ${libraryFoodFields("", { unit: "g", kcal: "", p: "", c: "", f: "", note: "", perUnit: false })}
+        ${libraryFoodFields("", { unit: "g", kcal: "", p: "", c: "", f: "", kinds: 1, note: "", perUnit: false })}
         <button class="primary-button span-2" type="submit">保存到食物库</button>
       </form>
     </details>
@@ -1379,6 +1432,7 @@ function libraryFoodFields(name, f) {
     ${field("p", "蛋白 g", f.p ?? "", "每100g或每单位")}
     ${field("c", "碳水 g", f.c ?? "", "每100g或每单位")}
     ${field("f", "脂肪 g", f.f ?? "", "每100g或每单位")}
+    ${field("kinds", "食材种类数", fmtKinds(foodKindValue(name, f)), "比如 1")}
     ${field("note", "备注", f.note || "", "包装来源/估算说明", "span-2")}`;
 }
 
@@ -1389,7 +1443,7 @@ function libraryFoodRow(name, f) {
   const searchText = `${name} ${f.note || ""} ${source}`.toLowerCase();
   return `<details class="library-row" data-library-row="${esc(searchText)}">
     <summary>
-      <span><b>${esc(name)}</b><small>${source} · ${mode} · ${fmt(f.kcal)} kcal · P${fmt(f.p, 1)} C${fmt(f.c, 1)} F${fmt(f.f, 1)}${f.note ? ` · ${esc(f.note)}` : ""}</small></span>
+      <span><b>${esc(name)}</b><small>${source} · ${mode} · ${fmt(f.kcal)} kcal · P${fmt(f.p, 1)} C${fmt(f.c, 1)} F${fmt(f.f, 1)} · ${fmtKinds(foodKindValue(name, f))}种食材${f.note ? ` · ${esc(f.note)}` : ""}</small></span>
     </summary>
     <form class="editLibraryFoodForm form-grid library-food-form">
       <input type="hidden" name="originalName" value="${esc(name)}" />
@@ -1839,7 +1893,7 @@ document.addEventListener("submit", (e) => {
   if (e.target.id === "customFoodForm") {
     const p = editablePlan();
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
-    if (meal) meal.items.push({ id: uid("custom"), custom: true, food: data.get("name") || "自定义食物", name: data.get("name") || "自定义食物", amount: 1, unit: "份", kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0) });
+    if (meal) meal.items.push({ id: uid("custom"), custom: true, food: data.get("name") || "自定义食物", name: data.get("name") || "自定义食物", amount: 1, unit: "份", kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0), kinds: foodKindValue(data.get("name") || "自定义食物", { kinds: data.get("kinds") }) });
   }
   if (e.target.classList.contains("estimateMealForm")) {
     const p = editablePlan();
@@ -1863,6 +1917,7 @@ document.addEventListener("submit", (e) => {
         p: macro.p,
         c: macro.c,
         f: macro.f,
+        kinds: foodKindValue(name, { kinds: data.get("kinds") || 3 }),
         note: data.get("note") || "",
       });
       state.estimateMealId = "";
@@ -1877,6 +1932,7 @@ document.addEventListener("submit", (e) => {
       const amount = Number(data.get("amount") || 0);
       const unit = String(data.get("unit") || "g").trim() || "g";
       const macro = { kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0) };
+      const kinds = foodKindValue(name, { kinds: data.get("kinds") });
       if (data.get("rememberFood") === "on") {
         const perUnit = ["份", "个", "颗"].includes(unit);
         const factor = perUnit ? Math.max(0.01, amount || 1) : Math.max(0.01, amount / 100);
@@ -1886,10 +1942,11 @@ document.addEventListener("submit", (e) => {
           p: rnd(macro.p / factor),
           c: rnd(macro.c / factor),
           f: rnd(macro.f / factor),
+          kinds,
           perUnit,
         });
         item.custom = false;
-        delete item.kcal; delete item.p; delete item.c; delete item.f;
+        delete item.kcal; delete item.p; delete item.c; delete item.f; delete item.kinds;
       } else {
         item.custom = true;
         item.kcal = macro.kcal;
@@ -1897,6 +1954,7 @@ document.addEventListener("submit", (e) => {
         item.c = macro.c;
         item.f = macro.f;
         item.baseAmount = amount || 1;
+        item.kinds = kinds;
       }
       item.food = name;
       item.name = name;
@@ -1991,6 +2049,7 @@ function foodFromForm(data) {
     p: Number(data.get("p") || 0),
     c: Number(data.get("c") || 0),
     f: Number(data.get("f") || 0),
+    kinds: foodKindValue(String(data.get("name") || data.get("food") || ""), { kinds: data.get("kinds") }),
     perUnit: data.get("mode") === "perUnit",
     note: String(data.get("note") || "").trim(),
   };
@@ -2008,6 +2067,7 @@ function syncFoodForm(form, fillFromLibrary = false) {
     form.elements.p.value = saved.p ?? "";
     form.elements.c.value = saved.c ?? "";
     form.elements.f.value = saved.f ?? "";
+    if (form.elements.kinds) form.elements.kinds.value = fmtKinds(foodKindValue(foodName, saved));
   }
   const candidate = foodFromForm(new FormData(form)) || saved;
   const amount = Number(form.elements.amount?.value || 0);
@@ -2024,7 +2084,7 @@ function syncFoodForm(form, fillFromLibrary = false) {
     return;
   }
   const macro = scaleMacro(candidate, amount);
-  preview.textContent = `${amount || 0}${candidate.unit || ""} ≈ ${fmt(macro.kcal)} kcal · 蛋白 ${fmt(macro.p, 1)}g · 碳水 ${fmt(macro.c, 1)}g · 脂肪 ${fmt(macro.f, 1)}g`;
+  preview.textContent = `${amount || 0}${candidate.unit || ""} ≈ ${fmt(macro.kcal)} kcal · 蛋白 ${fmt(macro.p, 1)}g · 碳水 ${fmt(macro.c, 1)}g · 脂肪 ${fmt(macro.f, 1)}g · ${fmtKinds(foodKindValue(foodName, candidate))}种食材`;
   preview.className = saved ? "food-preview ok" : "food-preview";
 }
 
@@ -2154,7 +2214,7 @@ function downloadBlob(blob, filename) {
 function exportRows() {
   const dates = Object.keys({ ...Object.fromEntries(weekDates().map((d) => [d, true])), ...state.store.records, ...state.store.plans }).sort();
   const summary = [["日期", "星期", "训练", "计划摄入", "已吃", "总消耗", "计划缺口", "实际缺口", "饮水", "饮水目标", "排便", "体重", "体脂", "腰围"]];
-  const foodRows = [["日期", "餐次", "食物", "数量", "单位", "热量", "蛋白", "碳水", "脂肪", "完成"]];
+  const foodRows = [["日期", "餐次", "食物", "数量", "单位", "热量", "蛋白", "碳水", "脂肪", "食材种类数", "完成"]];
   const trainRows = [["日期", "训练", "动作", "组数", "每组热量", "总热量", "备注", "完成"]];
   const bodyRows = [["日期", "体重", "体脂", "腰围", "备注"]];
   const stoolRows = [["日期", "是否排便", "时间", "形状", "备注"]];
@@ -2168,7 +2228,7 @@ function exportRows() {
     summary.push([date, p.day, p.title, rnd(planned.kcal), rnd(eaten.kcal), burn, rnd(targetDeficit(p, date)), rnd(burn - eaten.kcal), waterTotal(r), p.waterTarget, r.stool?.done ? "是" : "否", r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || ""]);
     p.meals.forEach((m) => m.items.forEach((item) => {
       const macro = foodMacro(item);
-      foodRows.push([date, m.name, item.food || item.name, item.amount, item.unit || "", rnd(macro.kcal), rnd(macro.p), rnd(macro.c), rnd(macro.f), r.foods[item.id] ? "是" : "否"]);
+      foodRows.push([date, m.name, item.food || item.name, item.amount, item.unit || "", rnd(macro.kcal), rnd(macro.p), rnd(macro.c), rnd(macro.f), itemFoodKinds(item), r.foods[item.id] ? "是" : "否"]);
     }));
     p.exercises.forEach((ex) => trainRows.push([date, p.title, ex.name, ex.sets || 0, rnd(ex.kcalPerSet || 0), rnd(exerciseKcal(ex)), ex.detail || "", r.exercises[ex.id] ? "是" : "否"]));
     bodyRows.push([date, r.body?.weight || "", r.body?.bodyFat || "", r.body?.waist || "", r.body?.note || ""]);
@@ -2177,7 +2237,7 @@ function exportRows() {
     if (logs.length) logs.forEach((log) => waterRows.push([date, log.time || "", log.amount || 0, log.label || "", p.waterTarget]));
     else waterRows.push([date, "", 0, "", p.waterTarget]);
   }
-  const foodLib = [["食物", "单位", "热量", "蛋白", "碳水", "脂肪", "计算方式", "备注"], ...Object.entries(state.store.foods).map(([name, f]) => [name, f.unit, f.kcal, f.p, f.c, f.f, f.perUnit ? "每单位" : "每100g/ml", f.note || ""])];
+  const foodLib = [["食物", "单位", "热量", "蛋白", "碳水", "脂肪", "食材种类数", "计算方式", "备注"], ...Object.entries(state.store.foods).map(([name, f]) => [name, f.unit, f.kcal, f.p, f.c, f.f, foodKindValue(name, f), f.perUnit ? "每单位" : "每100g/ml", f.note || ""])];
   const exerciseLib = [["动作", "每组热量", "默认备注", "说明"], ...Object.entries(state.store.exerciseLibrary || {}).map(([name, ex]) => [name, ex.kcalPerSet || 0, ex.detail || "", ex.note || ""])];
   return { "概览": summary, "饮食记录": foodRows, "训练记录": trainRows, "饮水记录": waterRows, "身体记录": bodyRows, "排便记录": stoolRows, "食物库": foodLib, "动作库": exerciseLib };
 }
