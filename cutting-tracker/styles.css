@@ -868,6 +868,49 @@ h1 { font-size: 27px; line-height: 1.08; }
 .quick-water:nth-child(3) { background: var(--amber); }
 .quick-water.danger { background: var(--red); }
 
+.water-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.water-log-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.water-log-row b,
+.water-log-row small {
+  display: block;
+}
+
+.water-log-row small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.water-log-row strong {
+  color: var(--deep);
+  white-space: nowrap;
+}
+
+.water-log-row button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-weight: 850;
+  cursor: pointer;
+}
+
 .chart-wrap {
   height: 260px;
   overflow: hidden;
