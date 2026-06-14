@@ -418,6 +418,29 @@ function upsertFood(name, food) {
   return true;
 }
 
+function syncFoodReferences(name) {
+  const lib = foodDef(name);
+  if (!name || !lib) return 0;
+  let changed = 0;
+  Object.values(state.store.plans || {}).forEach((p) => {
+    (p.meals || []).forEach((meal) => {
+      (meal.items || []).forEach((item) => {
+        if (item.food !== name || item.custom) return;
+        item.name = name;
+        item.unit = lib.unit || item.unit || "g";
+        delete item.kcal;
+        delete item.p;
+        delete item.c;
+        delete item.f;
+        delete item.kinds;
+        delete item.baseAmount;
+        changed += 1;
+      });
+    });
+  });
+  return changed;
+}
+
 function renameFoodReferences(from, to) {
   if (!from || !to || from === to) return;
   Object.values(state.store.plans || {}).forEach((p) => {
@@ -1421,7 +1444,7 @@ function foodLibraryEditor() {
     ? names.map((name) => libraryFoodRow(name, foodDef(name))).join("")
     : `<p class="empty compact">食物库目前是空的，可以先添加一个常吃食物。</p>`;
   return `<section class="panel library-editor-panel">
-    <div class="section-title"><h2>食物库</h2><small><span data-library-count>${names.length} 个食物</span></small></div>
+    <div class="section-title"><h2>食物库</h2><small><span data-library-count>${names.length} 个食物</span> · 保存后同步餐单</small></div>
     <label class="choice-search library-search"><span>搜索食物</span><input type="search" data-library-search placeholder="输入食物名，比如沙拉、卤牛肉、凉皮" /></label>
     <details class="nutrition-details add-library-details">
       <summary>添加新食物</summary>
@@ -1837,6 +1860,7 @@ document.addEventListener("submit", (e) => {
           return;
         }
         upsertFood(food, nextFood);
+        syncFoodReferences(food);
       }
       meal.items.push({ id: uid("food"), food, amount, unit: foodDef(food)?.unit || data.get("unit") || "g" });
     }
@@ -1849,6 +1873,7 @@ document.addEventListener("submit", (e) => {
       return;
     }
     upsertFood(name, nextFood);
+    syncFoodReferences(name);
   }
   if (e.target.id === "addLibraryExerciseForm") {
     const name = String(data.get("name") || "").trim();
@@ -1872,6 +1897,7 @@ document.addEventListener("submit", (e) => {
       deleteFoodFromLibrary(originalName);
     }
     upsertFood(name, nextFood);
+    syncFoodReferences(name);
   }
   if (e.target.classList.contains("editLibraryExerciseForm")) {
     const originalName = String(data.get("originalName") || "").trim();
@@ -1939,6 +1965,7 @@ document.addEventListener("submit", (e) => {
           kinds,
           perUnit,
         });
+        syncFoodReferences(name);
         item.custom = false;
         delete item.kcal; delete item.p; delete item.c; delete item.f; delete item.kinds;
       } else {
