@@ -8,6 +8,7 @@ const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 7
 const CALORIE_RULES = { normalDeficit: 500, saturdayOver: 1000 };
 const MACRO_RULES = { trainingProteinPerKg: 2.2, restProteinPerKg: 2.0, normalFatPerKg: 0.7, saturdayFatPerKg: 1.0 };
 const FAT_RANGE_RULES = { normalMinPerKg: 0.6, normalMaxPerKg: 0.85, saturdayMinPerKg: 0.8, saturdayMaxPerKg: 1.2 };
+const FUTURE_FOOD_SYNC_DAYS = 370;
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -436,6 +437,81 @@ function syncFoodReferences(name) {
         delete item.baseAmount;
         changed += 1;
       });
+    });
+  });
+  return changed;
+}
+
+function futureSyncDates(fromDate = state.date) {
+  const today = initialDate();
+  const first = fromDate < today ? today : addDays(fromDate, 1);
+  return Array.from({ length: FUTURE_FOOD_SYNC_DAYS }, (_, i) => addDays(first, i));
+}
+
+function itemMatchesFood(item, food) {
+  return !!food && (item.food === food || item.name === food);
+}
+
+function foodItemDone(date, item) {
+  return !!state.store.records?.[date]?.foods?.[item.id];
+}
+
+function cloneFoodForFuture(source) {
+  const next = {
+    food: source.food || source.name || "",
+    name: source.name || source.food || "",
+    amount: Number(source.amount || 0),
+    unit: source.unit || "g",
+  };
+  if (source.custom) {
+    next.custom = true;
+    next.kcal = Number(source.kcal || 0);
+    next.p = Number(source.p || 0);
+    next.c = Number(source.c || 0);
+    next.f = Number(source.f || 0);
+    next.baseAmount = Number(source.baseAmount || source.amount || 1);
+    next.kinds = foodKindValue(next.food || next.name, source);
+    if (source.note) next.note = source.note;
+  }
+  return next;
+}
+
+function applyFoodToFutureItem(target, source) {
+  const id = target.id;
+  ["food", "name", "amount", "unit", "custom", "kcal", "p", "c", "f", "baseAmount", "kinds", "note"].forEach((key) => delete target[key]);
+  Object.assign(target, { id }, source);
+}
+
+function syncFutureFoodEdit(originalFood, editedItem, fromDate = state.date) {
+  const source = cloneFoodForFuture(editedItem);
+  if (!originalFood || !source.food) return 0;
+  let changed = 0;
+  futureSyncDates(fromDate).forEach((date) => {
+    const preview = plan(date);
+    if (!(preview.meals || []).some((meal) => (meal.items || []).some((item) => itemMatchesFood(item, originalFood)))) return;
+    const p = editablePlan(date);
+    (p.meals || []).forEach((meal) => {
+      (meal.items || []).forEach((item) => {
+        if (!itemMatchesFood(item, originalFood) || foodItemDone(date, item)) return;
+        applyFoodToFutureItem(item, source);
+        changed += 1;
+      });
+    });
+  });
+  return changed;
+}
+
+function syncFutureFoodDelete(originalFood, fromDate = state.date) {
+  if (!originalFood) return 0;
+  let changed = 0;
+  futureSyncDates(fromDate).forEach((date) => {
+    const preview = plan(date);
+    if (!(preview.meals || []).some((meal) => (meal.items || []).some((item) => itemMatchesFood(item, originalFood)))) return;
+    const p = editablePlan(date);
+    (p.meals || []).forEach((meal) => {
+      const before = meal.items.length;
+      meal.items = (meal.items || []).filter((item) => !itemMatchesFood(item, originalFood) || foodItemDone(date, item));
+      changed += before - meal.items.length;
     });
   });
   return changed;
@@ -1781,7 +1857,11 @@ document.addEventListener("click", async (e) => {
     const [mealId, itemId, delta] = adjust.dataset.adjust.split(":");
     const p = editablePlan();
     const item = p.meals.find((m) => m.id === mealId)?.items.find((x) => x.id === itemId);
-    if (item) item.amount = cleanAmount(Number(item.amount || 0) + Number(delta), item.unit || "g");
+    if (item) {
+      const originalFood = item.food || item.name;
+      item.amount = cleanAmount(Number(item.amount || 0) + Number(delta), item.unit || "g");
+      syncFutureFoodEdit(originalFood, item);
+    }
     saveStore(); renderPreservingScroll(); return;
   }
   const adjustExercise = e.target.closest("[data-adjust-exercise]");
@@ -1804,6 +1884,8 @@ document.addEventListener("click", async (e) => {
     const [mealId, itemId] = del.dataset.deleteFood.split(":");
     const p = editablePlan();
     const meal = p.meals.find((m) => m.id === mealId);
+    const item = meal?.items.find((x) => x.id === itemId);
+    if (item) syncFutureFoodDelete(item.food || item.name);
     if (meal) meal.items = meal.items.filter((x) => x.id !== itemId);
     delete record().foods[itemId];
     saveStore(); renderPreservingScroll(); return;
@@ -1948,6 +2030,7 @@ document.addEventListener("submit", (e) => {
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
     const item = meal?.items.find((x) => x.id === data.get("itemId"));
     if (item) {
+      const originalFood = item.food || item.name;
       const name = String(data.get("name") || item.food || "自定义食物").trim();
       const amount = Number(data.get("amount") || 0);
       const unit = String(data.get("unit") || "g").trim() || "g";
@@ -1981,6 +2064,7 @@ document.addEventListener("submit", (e) => {
       item.name = name;
       item.amount = amount;
       item.unit = unit;
+      syncFutureFoodEdit(originalFood, item);
     }
   }
   if (e.target.classList.contains("editExerciseForm")) {
