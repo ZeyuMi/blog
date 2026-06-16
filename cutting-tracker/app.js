@@ -8,7 +8,6 @@ const USER_PROFILE = { sex: "male", age: 34, heightCm: 180, referenceWeightKg: 7
 const CALORIE_RULES = { normalDeficit: 500, saturdayOver: 1000 };
 const MACRO_RULES = { trainingProteinPerKg: 2.2, restProteinPerKg: 2.0, normalFatPerKg: 0.7, saturdayFatPerKg: 1.0 };
 const FAT_RANGE_RULES = { normalMinPerKg: 0.6, normalMaxPerKg: 0.85, saturdayMinPerKg: 0.8, saturdayMaxPerKg: 1.2 };
-const FUTURE_FOOD_SYNC_DAYS = 370;
 
 const FOOD_LIBRARY = {
   "香蕉": { unit: "g", kcal: 89, p: 1.1, c: 22.8, f: 0.3 },
@@ -273,7 +272,7 @@ function loadStore() {
       if (old) return normalizeStore({ version: 4, records: old, plans: {}, foods: FOOD_LIBRARY });
     } catch {}
   }
-  return normalizeStore({ version: 9, records: {}, plans: {}, foods: FOOD_LIBRARY, deletedFoods: [], exerciseLibrary: EXERCISE_LIBRARY, deletedExercises: [] });
+  return normalizeStore({ version: 9, records: {}, plans: {}, foods: FOOD_LIBRARY, deletedFoods: [], exerciseLibrary: EXERCISE_LIBRARY, deletedExercises: [], foodSyncRules: [] });
 }
 
 function normalizeStore(store) {
@@ -286,6 +285,7 @@ function normalizeStore(store) {
   deletedExercises.forEach((name) => delete exerciseLibrary[name]);
   const records = Object.fromEntries(Object.entries(store.records || {}).map(([date, r]) => [date, normalizeRecord(r)]));
   const plans = Object.fromEntries(Object.entries(store.plans || {}).map(([date, savedPlan]) => [date, normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary)]));
+  const foodSyncRules = Array.isArray(store.foodSyncRules) ? store.foodSyncRules.map(normalizeFoodSyncRule).filter(Boolean) : [];
   return {
     version: 9,
     records,
@@ -294,6 +294,7 @@ function normalizeStore(store) {
     deletedFoods,
     exerciseLibrary,
     deletedExercises,
+    foodSyncRules,
   };
 }
 
@@ -323,6 +324,24 @@ function normalizeRecord(r = {}) {
 
 function normalizeFoodDef(name, f = {}) {
   return { ...f, kinds: foodKindValue(name, f) };
+}
+
+function normalizeFoodSyncRule(rule = {}) {
+  if (!["add", "edit", "delete"].includes(rule.type) || !rule.fromDate) return null;
+  const normalized = {
+    id: rule.id || uid("fsync"),
+    type: rule.type,
+    fromDate: rule.fromDate,
+    createdAt: rule.createdAt || new Date().toISOString(),
+  };
+  if (rule.mealName) normalized.mealName = String(rule.mealName);
+  if (rule.food) normalized.food = String(rule.food);
+  if (rule.originalFood) normalized.originalFood = String(rule.originalFood);
+  if (rule.item) normalized.item = cloneFoodForFuture(rule.item);
+  if (normalized.type === "add" && (!normalized.mealName || !normalized.item?.food)) return null;
+  if (normalized.type === "edit" && (!normalized.originalFood || !normalized.item?.food)) return null;
+  if (normalized.type === "delete" && !normalized.food) return null;
+  return normalized;
 }
 
 function foodKindValue(name, f = {}) {
@@ -439,13 +458,10 @@ function syncFoodReferences(name) {
       });
     });
   });
+  (state.store.foodSyncRules || []).forEach((rule) => {
+    if (rule.item?.food === name && !rule.item.custom) rule.item.unit = lib.unit || rule.item.unit || "g";
+  });
   return changed;
-}
-
-function futureSyncDates(fromDate = state.date) {
-  const today = initialDate();
-  const first = fromDate < today ? today : addDays(fromDate, 1);
-  return Array.from({ length: FUTURE_FOOD_SYNC_DAYS }, (_, i) => addDays(first, i));
 }
 
 function itemMatchesFood(item, food) {
@@ -482,39 +498,87 @@ function applyFoodToFutureItem(target, source) {
   Object.assign(target, { id }, source);
 }
 
-function syncFutureFoodEdit(originalFood, editedItem, fromDate = state.date) {
-  const source = cloneFoodForFuture(editedItem);
-  if (!originalFood || !source.food) return 0;
-  let changed = 0;
-  futureSyncDates(fromDate).forEach((date) => {
-    const preview = plan(date);
-    if (!(preview.meals || []).some((meal) => (meal.items || []).some((item) => itemMatchesFood(item, originalFood)))) return;
-    const p = editablePlan(date);
-    (p.meals || []).forEach((meal) => {
-      (meal.items || []).forEach((item) => {
-        if (!itemMatchesFood(item, originalFood) || foodItemDone(date, item)) return;
-        applyFoodToFutureItem(item, source);
-        changed += 1;
-      });
-    });
+function sameFoodSyncScope(a, b) {
+  if (!a || !b || a.type !== b.type || a.fromDate !== b.fromDate) return false;
+  if (b.type === "edit") return a.originalFood === b.originalFood;
+  if (b.type === "delete") return a.food === b.food;
+  if (b.type === "add") return false;
+  return false;
+}
+
+function addFoodSyncRule(rule) {
+  if (!state.store.foodSyncRules) state.store.foodSyncRules = [];
+  const normalized = normalizeFoodSyncRule(rule);
+  if (!normalized) return "";
+  state.store.foodSyncRules = state.store.foodSyncRules.filter((existing) => !sameFoodSyncScope(existing, normalized));
+  state.store.foodSyncRules.push(normalized);
+  return normalized.id;
+}
+
+function syncFutureFoodAdd(meal, item, fromDate = state.date) {
+  return addFoodSyncRule({
+    type: "add",
+    fromDate,
+    mealName: meal?.name || "",
+    item,
+    createdAt: new Date().toISOString(),
   });
-  return changed;
+}
+
+function syncFutureFoodEdit(originalFood, editedItem, fromDate = state.date) {
+  return addFoodSyncRule({
+    type: "edit",
+    fromDate,
+    originalFood,
+    item: editedItem,
+    createdAt: new Date().toISOString(),
+  });
 }
 
 function syncFutureFoodDelete(originalFood, fromDate = state.date) {
-  if (!originalFood) return 0;
-  let changed = 0;
-  futureSyncDates(fromDate).forEach((date) => {
-    const preview = plan(date);
-    if (!(preview.meals || []).some((meal) => (meal.items || []).some((item) => itemMatchesFood(item, originalFood)))) return;
-    const p = editablePlan(date);
-    (p.meals || []).forEach((meal) => {
-      const before = meal.items.length;
-      meal.items = (meal.items || []).filter((item) => !itemMatchesFood(item, originalFood) || foodItemDone(date, item));
-      changed += before - meal.items.length;
-    });
+  return addFoodSyncRule({
+    type: "delete",
+    fromDate,
+    food: originalFood,
+    createdAt: new Date().toISOString(),
   });
-  return changed;
+}
+
+function applyFoodSyncRule(p, date, rule) {
+  if (!p || !rule || date <= rule.fromDate) return;
+  if (rule.type === "add") {
+    const meal = (p.meals || []).find((m) => m.name === rule.mealName);
+    if (!meal || !rule.item?.food) return;
+    const id = `sync_${rule.id}`;
+    meal.items = meal.items || [];
+    if (meal.items.some((item) => item.syncRuleId === rule.id || item.id === id)) return;
+    meal.items.push({ id, syncRuleId: rule.id, ...cloneFoodForFuture(rule.item) });
+    return;
+  }
+  if (rule.type === "edit") {
+    const source = cloneFoodForFuture(rule.item || {});
+    if (!rule.originalFood || !source.food) return;
+    (p.meals || []).forEach((meal) => {
+      (meal.items || []).forEach((item) => {
+        if (!itemMatchesFood(item, rule.originalFood) || foodItemDone(date, item)) return;
+        applyFoodToFutureItem(item, source);
+      });
+    });
+    return;
+  }
+  if (rule.type === "delete") {
+    (p.meals || []).forEach((meal) => {
+      meal.items = (meal.items || []).filter((item) => !itemMatchesFood(item, rule.food) || foodItemDone(date, item));
+    });
+  }
+}
+
+function applyFoodSyncRules(p, date) {
+  const rules = (state.store.foodSyncRules || [])
+    .filter((rule) => date > rule.fromDate)
+    .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+  rules.forEach((rule) => applyFoodSyncRule(p, date, rule));
+  return p;
 }
 
 function renameFoodReferences(from, to) {
@@ -528,6 +592,14 @@ function renameFoodReferences(from, to) {
         }
       });
     });
+  });
+  (state.store.foodSyncRules || []).forEach((rule) => {
+    if (rule.food === from) rule.food = to;
+    if (rule.originalFood === from) rule.originalFood = to;
+    if (rule.item?.food === from) {
+      rule.item.food = to;
+      rule.item.name = to;
+    }
   });
 }
 
@@ -778,12 +850,12 @@ function macroGuidance(p = plan(), date = state.date) {
 }
 
 function plan(date = state.date) {
-  return state.store.plans[date] || createPlan(date);
+  return applyFoodSyncRules(state.store.plans[date] || createPlan(date), date);
 }
 
 function editablePlan(date = state.date) {
   if (!state.store.plans[date]) state.store.plans[date] = structuredClone(createPlan(date));
-  return state.store.plans[date];
+  return applyFoodSyncRules(state.store.plans[date], date);
 }
 
 function record(date = state.date) {
@@ -1376,6 +1448,7 @@ function mealCard(meal, r) {
           <div class="food-actions">
             <button data-adjust="${meal.id}:${item.id}:${-step}" type="button">-${step}</button>
             <button data-adjust="${meal.id}:${item.id}:${step}" type="button">+${step}</button>
+            <button class="sync-button" data-sync-future="${meal.id}:${item.id}" type="button">同步以后</button>
             <button data-delete-food="${meal.id}:${item.id}" type="button">删</button>
           </div>
           <details class="edit-details">
@@ -1823,12 +1896,14 @@ document.addEventListener("click", async (e) => {
     const meal = p.meals.find((m) => m.id === choiceBtn.dataset.choiceMeal);
     const food = choiceBtn.dataset.choiceFood;
     if (meal && food) {
-      meal.items.push({
+      const item = {
         id: uid("food"),
         food,
         amount: Number(choiceBtn.dataset.choiceAmount || 0),
         unit: foodDef(food)?.unit || "g",
-      });
+      };
+      meal.items.push(item);
+      syncFutureFoodAdd(meal, item);
       saveStore();
       renderPreservingScroll();
     }
@@ -1844,7 +1919,10 @@ document.addEventListener("click", async (e) => {
     const r = record();
     const [type, id] = check.dataset.check.split(":");
     if (type === "exercise") r.exercises[id] = !r.exercises[id];
-    if (type === "food") r.foods[id] = !r.foods[id];
+    if (type === "food") {
+      editablePlan();
+      r.foods[id] = !r.foods[id];
+    }
     saveStore(); renderPreservingScroll(); return;
   }
   const addWater = e.target.closest("[data-water-add]");
@@ -1852,6 +1930,14 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("[data-water-reset]")) { const r = record(); r.waterMl = 0; r.waterSlots = {}; r.waterSlotLogs = {}; r.waterLogs = []; saveStore(); renderPreservingScroll(); return; }
   const deleteWaterLog = e.target.closest("[data-delete-water-log]");
   if (deleteWaterLog) { const r = record(); removeWaterLog(r, deleteWaterLog.dataset.deleteWaterLog); saveStore(); renderPreservingScroll(); return; }
+  const syncFuture = e.target.closest("[data-sync-future]");
+  if (syncFuture) {
+    const [mealId, itemId] = syncFuture.dataset.syncFuture.split(":");
+    const p = editablePlan();
+    const item = p.meals.find((m) => m.id === mealId)?.items.find((x) => x.id === itemId);
+    if (item) syncFutureFoodEdit(item.food || item.name, item);
+    saveStore(); renderPreservingScroll(); return;
+  }
   const adjust = e.target.closest("[data-adjust]");
   if (adjust) {
     const [mealId, itemId, delta] = adjust.dataset.adjust.split(":");
@@ -1944,7 +2030,9 @@ document.addEventListener("submit", (e) => {
         upsertFood(food, nextFood);
         syncFoodReferences(food);
       }
-      meal.items.push({ id: uid("food"), food, amount, unit: foodDef(food)?.unit || data.get("unit") || "g" });
+      const item = { id: uid("food"), food, amount, unit: foodDef(food)?.unit || data.get("unit") || "g" };
+      meal.items.push(item);
+      syncFutureFoodAdd(meal, item);
     }
   }
   if (e.target.id === "addLibraryFoodForm") {
@@ -1995,7 +2083,11 @@ document.addEventListener("submit", (e) => {
   if (e.target.id === "customFoodForm") {
     const p = editablePlan();
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
-    if (meal) meal.items.push({ id: uid("custom"), custom: true, food: data.get("name") || "自定义食物", name: data.get("name") || "自定义食物", amount: 1, unit: "份", kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0), kinds: foodKindValue(data.get("name") || "自定义食物", { kinds: data.get("kinds") }) });
+    if (meal) {
+      const item = { id: uid("custom"), custom: true, food: data.get("name") || "自定义食物", name: data.get("name") || "自定义食物", amount: 1, unit: "份", kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0), kinds: foodKindValue(data.get("name") || "自定义食物", { kinds: data.get("kinds") }) };
+      meal.items.push(item);
+      syncFutureFoodAdd(meal, item);
+    }
   }
   if (e.target.classList.contains("estimateMealForm")) {
     const p = editablePlan();

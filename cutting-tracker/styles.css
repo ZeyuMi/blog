@@ -671,8 +671,10 @@ h1 { font-size: 27px; line-height: 1.08; }
 
 .food-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
   align-self: start;
+  justify-content: flex-end;
 }
 
 .food-actions button {
@@ -682,6 +684,12 @@ h1 { font-size: 27px; line-height: 1.08; }
   background: var(--surface-3);
   color: var(--ink);
   font-weight: 850;
+}
+
+.food-actions .sync-button {
+  min-width: 64px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .exercise-actions button {
