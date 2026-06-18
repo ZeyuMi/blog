@@ -723,9 +723,7 @@ h1 { font-size: 27px; line-height: 1.08; }
 }
 
 .add-exercise-form {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  margin-top: 0;
 }
 
 .field {

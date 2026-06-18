@@ -1130,11 +1130,8 @@ const VIEWS = {
     const exerciseOptions = exerciseNames().map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
     return html(`<div class="stack">
       ${trainingOverviewPanel(p, r)}
-      <section class="panel">
-        <div class="section-title"><h2>${p.title}</h2><small>估算 ${fmt(exerciseTotal(p))} kcal</small></div>
-        <div class="task-list">
-          ${p.exercises.map((ex) => exerciseRow(ex, r.exercises[ex.id])).join("")}
-        </div>
+      <section class="panel add-exercise-panel">
+        <div class="section-title"><h2>添加当天动作</h2><small>只加入 ${state.date}</small></div>
         <form id="addExerciseForm" class="form-grid add-exercise-form">
           <datalist id="exerciseLibraryList">${exerciseOptions}</datalist>
           <label class="field"><span>动作</span><input name="name" list="exerciseLibraryList" placeholder="例如 坐姿划船" autocomplete="off" /></label>
@@ -1142,8 +1139,14 @@ const VIEWS = {
           ${field("kcalPerSet", "每组 kcal", "", "12")}
           ${field("detail", "备注", "", "重量/次数/时长")}
           <div class="food-preview span-2" id="exercisePreview">输入动作和组数后自动估算</div>
-          <button class="primary-button" type="submit">添加动作</button>
+          <button class="primary-button span-2" type="submit">添加到今天</button>
         </form>
+      </section>
+      <section class="panel">
+        <div class="section-title"><h2>${p.title}</h2><small>估算 ${fmt(exerciseTotal(p))} kcal</small></div>
+        <div class="task-list">
+          ${p.exercises.map((ex) => exerciseRow(ex, r.exercises[ex.id])).join("")}
+        </div>
       </section>
       ${exerciseLibraryEditor()}
     </div>`);
