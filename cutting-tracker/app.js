@@ -1196,8 +1196,8 @@ const VIEWS = {
     const p = plan();
     const r = readRecord();
     return html(`<div class="stack">
-      ${nutritionOverviewPanel("今日饮食概览", p, r)}
       ${foodSyncModePanel()}
+      ${nutritionOverviewPanel("今日饮食概览", p, r)}
       ${p.meals.map((meal) => mealCard(meal, r)).join("")}
       ${addFoodPanel(p)}
     </div>`);
@@ -1357,13 +1357,19 @@ function foodSyncModePanel() {
     <span><b>${title}</b><small>${detail}</small></span>
   </label>`;
   return `<section class="panel sync-mode-panel">
-    <div class="section-title"><h2>饮食修改范围</h2><small>新增、编辑、加减、删除都按这里执行</small></div>
+    <div class="section-title"><h2>影响范围</h2><small>默认只改当天，选中后下一次饮食修改会按范围同步</small></div>
     <div class="sync-choice-grid">
       ${option("none", "仅今天", "默认，不影响以后")}
       ${option("all", "以后每天", "从明天起都同步")}
-      ${option("same-weekday", "以后同周几", `只同步后续${dayName(state.date)}`)}
+      ${option("same-weekday", "同周几", `只同步后续${dayName(state.date)}`)}
     </div>
   </section>`;
+}
+
+function foodSyncModeTitle() {
+  if (state.foodSyncMode === "all") return "以后每天";
+  if (state.foodSyncMode === "same-weekday") return "同周几";
+  return "仅今天";
 }
 
 function macroSplitBar(split) {
@@ -1488,6 +1494,7 @@ function mealCard(meal, r) {
     <div class="meal-head">
       <div><h3>${meal.name}</h3><small>已吃 ${fmt(eaten.kcal)} kcal · P ${fmt(eaten.p, 1)} / C ${fmt(eaten.c, 1)} / F ${fmt(eaten.f, 1)} · 已列 ${fmt(listed.kcal)} kcal</small></div>
       <div class="meal-actions">
+        <span class="scope-badge">影响：${foodSyncModeTitle()}</span>
         <button class="estimate-button ${estimateOpen ? "is-active" : ""}" data-estimate-meal="${meal.id}" type="button">+ 估算餐</button>
         <span class="badge ${done === meal.items.length ? "ok" : "warn"}">${done}/${meal.items.length}</span>
       </div>
