@@ -435,6 +435,8 @@ h1 { font-size: 27px; line-height: 1.08; }
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .estimate-button {
@@ -450,6 +452,20 @@ h1 { font-size: 27px; line-height: 1.08; }
 
 .estimate-button.is-active {
   background: var(--blue);
+}
+
+.scope-badge {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  padding: 5px 9px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 850;
 }
 
 .metric-grid {
@@ -753,7 +769,16 @@ h1 { font-size: 27px; line-height: 1.08; }
 .soft { background: var(--surface-2); }
 
 .sync-mode-panel {
+  position: sticky;
+  top: 8px;
+  z-index: 4;
   background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  border-color: rgba(31, 116, 99, 0.32);
+  box-shadow: 0 16px 30px rgba(9, 43, 42, 0.12);
+}
+
+.sync-mode-panel .section-title {
+  margin-bottom: 8px;
 }
 
 .sync-choice-grid {
@@ -765,12 +790,12 @@ h1 { font-size: 27px; line-height: 1.08; }
 .sync-choice {
   display: grid;
   align-items: center;
-  min-height: 58px;
+  min-height: 54px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   color: var(--ink);
-  padding: 10px;
+  padding: 9px;
 }
 
 .sync-choice input {
