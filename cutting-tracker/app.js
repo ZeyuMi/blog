@@ -235,6 +235,7 @@ const state = {
   theme: loadTheme(),
   centerDateOnRender: true,
   estimateMealId: "",
+  foodSyncMode: "none",
 };
 
 function initialDate() {
@@ -338,6 +339,7 @@ function normalizeFoodSyncRule(rule = {}) {
   if (rule.food) normalized.food = String(rule.food);
   if (rule.originalFood) normalized.originalFood = String(rule.originalFood);
   if (rule.item) normalized.item = cloneFoodForFuture(rule.item);
+  normalized.scope = rule.scope === "same-weekday" ? "same-weekday" : "all";
   if (normalized.type === "add" && (!normalized.mealName || !normalized.item?.food)) return null;
   if (normalized.type === "edit" && (!normalized.originalFood || !normalized.item?.food)) return null;
   if (normalized.type === "delete" && !normalized.food) return null;
@@ -358,6 +360,7 @@ function fmtKinds(n) {
 function normalizeSavedPlan(date, savedPlan, foods, exerciseLibrary) {
   if (!savedPlan?.meals) return savedPlan;
   const p = JSON.parse(JSON.stringify(savedPlan));
+  p.blockedFoodSyncRuleIds = Array.isArray(p.blockedFoodSyncRuleIds) ? p.blockedFoodSyncRuleIds : [];
   p.exercises = (p.exercises || []).map((ex, i) => normalizeExercise(ex, i, exerciseLibrary));
   p.meals.forEach((meal) => {
     meal.items = (meal.items || []).map((item) => {
@@ -494,8 +497,10 @@ function cloneFoodForFuture(source) {
 
 function applyFoodToFutureItem(target, source) {
   const id = target.id;
-  ["food", "name", "amount", "unit", "custom", "kcal", "p", "c", "f", "baseAmount", "kinds", "note"].forEach((key) => delete target[key]);
+  const syncRuleId = target.syncRuleId;
+  ["food", "name", "amount", "unit", "custom", "kcal", "p", "c", "f", "baseAmount", "kinds", "note", "localOverride"].forEach((key) => delete target[key]);
   Object.assign(target, { id }, source);
+  if (syncRuleId) target.syncRuleId = syncRuleId;
 }
 
 function sameFoodSyncScope(a, b) {
@@ -515,42 +520,77 @@ function addFoodSyncRule(rule) {
   return normalized.id;
 }
 
-function syncFutureFoodAdd(meal, item, fromDate = state.date) {
+function foodSyncScope() {
+  if (state.foodSyncMode === "all") return "all";
+  if (state.foodSyncMode === "same-weekday") return "same-weekday";
+  return "";
+}
+
+function resetFoodSyncModeAfterMutation(scope) {
+  if (scope) state.foodSyncMode = "none";
+}
+
+function markFoodLocalOverride(item) {
+  if (item) item.localOverride = true;
+  return item;
+}
+
+function blockFoodSyncRuleForPlan(p, item) {
+  if (!p || !item?.syncRuleId) return;
+  const ids = new Set(p.blockedFoodSyncRuleIds || []);
+  ids.add(item.syncRuleId);
+  p.blockedFoodSyncRuleIds = [...ids];
+}
+
+function syncFutureFoodAdd(meal, item, scope = foodSyncScope(), fromDate = state.date) {
+  if (!scope) return "";
   return addFoodSyncRule({
     type: "add",
     fromDate,
+    scope,
     mealName: meal?.name || "",
     item,
     createdAt: new Date().toISOString(),
   });
 }
 
-function syncFutureFoodEdit(originalFood, editedItem, fromDate = state.date) {
+function syncFutureFoodEdit(originalFood, editedItem, scope = foodSyncScope(), fromDate = state.date) {
+  if (!scope) return "";
   return addFoodSyncRule({
     type: "edit",
     fromDate,
+    scope,
     originalFood,
     item: editedItem,
     createdAt: new Date().toISOString(),
   });
 }
 
-function syncFutureFoodDelete(originalFood, fromDate = state.date) {
+function syncFutureFoodDelete(originalFood, scope = foodSyncScope(), fromDate = state.date) {
+  if (!scope) return "";
   return addFoodSyncRule({
     type: "delete",
     fromDate,
+    scope,
     food: originalFood,
     createdAt: new Date().toISOString(),
   });
 }
 
+function ruleAppliesToDate(rule, date) {
+  if (!rule || date <= rule.fromDate) return false;
+  if (rule.scope === "same-weekday") return templateIndex(date) === templateIndex(rule.fromDate);
+  return true;
+}
+
 function applyFoodSyncRule(p, date, rule) {
-  if (!p || !rule || date <= rule.fromDate) return;
+  if (!p || !rule || !ruleAppliesToDate(rule, date)) return;
   if (rule.type === "add") {
     const meal = (p.meals || []).find((m) => m.name === rule.mealName);
     if (!meal || !rule.item?.food) return;
     const id = `sync_${rule.id}`;
     meal.items = meal.items || [];
+    if ((p.blockedFoodSyncRuleIds || []).includes(rule.id)) return;
     if (meal.items.some((item) => item.syncRuleId === rule.id || item.id === id)) return;
     meal.items.push({ id, syncRuleId: rule.id, ...cloneFoodForFuture(rule.item) });
     return;
@@ -560,7 +600,7 @@ function applyFoodSyncRule(p, date, rule) {
     if (!rule.originalFood || !source.food) return;
     (p.meals || []).forEach((meal) => {
       (meal.items || []).forEach((item) => {
-        if (!itemMatchesFood(item, rule.originalFood) || foodItemDone(date, item)) return;
+        if (!itemMatchesFood(item, rule.originalFood) || foodItemDone(date, item) || item.localOverride) return;
         applyFoodToFutureItem(item, source);
       });
     });
@@ -568,14 +608,14 @@ function applyFoodSyncRule(p, date, rule) {
   }
   if (rule.type === "delete") {
     (p.meals || []).forEach((meal) => {
-      meal.items = (meal.items || []).filter((item) => !itemMatchesFood(item, rule.food) || foodItemDone(date, item));
+      meal.items = (meal.items || []).filter((item) => !itemMatchesFood(item, rule.food) || foodItemDone(date, item) || item.localOverride);
     });
   }
 }
 
 function applyFoodSyncRules(p, date) {
   const rules = (state.store.foodSyncRules || [])
-    .filter((rule) => date > rule.fromDate)
+    .filter((rule) => ruleAppliesToDate(rule, date))
     .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
   rules.forEach((rule) => applyFoodSyncRule(p, date, rule));
   return p;
@@ -1157,6 +1197,7 @@ const VIEWS = {
     const r = readRecord();
     return html(`<div class="stack">
       ${nutritionOverviewPanel("今日饮食概览", p, r)}
+      ${foodSyncModePanel()}
       ${p.meals.map((meal) => mealCard(meal, r)).join("")}
       ${addFoodPanel(p)}
     </div>`);
@@ -1310,6 +1351,21 @@ function nutritionOverviewPanel(title, p = plan(), r = readRecord()) {
   </section>`;
 }
 
+function foodSyncModePanel() {
+  const option = (value, title, detail) => `<label class="sync-choice ${state.foodSyncMode === value ? "is-active" : ""}">
+    <input type="radio" name="foodSyncMode" value="${value}" ${state.foodSyncMode === value ? "checked" : ""} />
+    <span><b>${title}</b><small>${detail}</small></span>
+  </label>`;
+  return `<section class="panel sync-mode-panel">
+    <div class="section-title"><h2>饮食修改范围</h2><small>新增、编辑、加减、删除都按这里执行</small></div>
+    <div class="sync-choice-grid">
+      ${option("none", "仅今天", "默认，不影响以后")}
+      ${option("all", "以后每天", "从明天起都同步")}
+      ${option("same-weekday", "以后同周几", `只同步后续${dayName(state.date)}`)}
+    </div>
+  </section>`;
+}
+
 function macroSplitBar(split) {
   const c = Math.max(0, split.c);
   const p = Math.max(0, split.p);
@@ -1451,7 +1507,6 @@ function mealCard(meal, r) {
           <div class="food-actions">
             <button data-adjust="${meal.id}:${item.id}:${-step}" type="button">-${step}</button>
             <button data-adjust="${meal.id}:${item.id}:${step}" type="button">+${step}</button>
-            <button class="sync-button" data-sync-future="${meal.id}:${item.id}" type="button">同步以后</button>
             <button data-delete-food="${meal.id}:${item.id}" type="button">删</button>
           </div>
           <details class="edit-details">
@@ -1899,14 +1954,17 @@ document.addEventListener("click", async (e) => {
     const meal = p.meals.find((m) => m.id === choiceBtn.dataset.choiceMeal);
     const food = choiceBtn.dataset.choiceFood;
     if (meal && food) {
+      const scope = foodSyncScope();
       const item = {
         id: uid("food"),
         food,
         amount: Number(choiceBtn.dataset.choiceAmount || 0),
         unit: foodDef(food)?.unit || "g",
       };
+      if (!scope) markFoodLocalOverride(item);
       meal.items.push(item);
-      syncFutureFoodAdd(meal, item);
+      if (scope) syncFutureFoodAdd(meal, item, scope);
+      resetFoodSyncModeAfterMutation(scope);
       saveStore();
       renderPreservingScroll();
     }
@@ -1933,23 +1991,18 @@ document.addEventListener("click", async (e) => {
   if (e.target.closest("[data-water-reset]")) { const r = record(); r.waterMl = 0; r.waterSlots = {}; r.waterSlotLogs = {}; r.waterLogs = []; saveStore(); renderPreservingScroll(); return; }
   const deleteWaterLog = e.target.closest("[data-delete-water-log]");
   if (deleteWaterLog) { const r = record(); removeWaterLog(r, deleteWaterLog.dataset.deleteWaterLog); saveStore(); renderPreservingScroll(); return; }
-  const syncFuture = e.target.closest("[data-sync-future]");
-  if (syncFuture) {
-    const [mealId, itemId] = syncFuture.dataset.syncFuture.split(":");
-    const p = editablePlan();
-    const item = p.meals.find((m) => m.id === mealId)?.items.find((x) => x.id === itemId);
-    if (item) syncFutureFoodEdit(item.food || item.name, item);
-    saveStore(); renderPreservingScroll(); return;
-  }
   const adjust = e.target.closest("[data-adjust]");
   if (adjust) {
     const [mealId, itemId, delta] = adjust.dataset.adjust.split(":");
     const p = editablePlan();
     const item = p.meals.find((m) => m.id === mealId)?.items.find((x) => x.id === itemId);
     if (item) {
+      const scope = foodSyncScope();
       const originalFood = item.food || item.name;
       item.amount = cleanAmount(Number(item.amount || 0) + Number(delta), item.unit || "g");
-      syncFutureFoodEdit(originalFood, item);
+      if (scope) syncFutureFoodEdit(originalFood, item, scope);
+      else markFoodLocalOverride(item);
+      resetFoodSyncModeAfterMutation(scope);
     }
     saveStore(); renderPreservingScroll(); return;
   }
@@ -1974,9 +2027,12 @@ document.addEventListener("click", async (e) => {
     const p = editablePlan();
     const meal = p.meals.find((m) => m.id === mealId);
     const item = meal?.items.find((x) => x.id === itemId);
-    if (item) syncFutureFoodDelete(item.food || item.name);
+    const scope = foodSyncScope();
+    if (item && scope) syncFutureFoodDelete(item.food || item.name, scope);
+    if (item && !scope) blockFoodSyncRuleForPlan(p, item);
     if (meal) meal.items = meal.items.filter((x) => x.id !== itemId);
     delete record().foods[itemId];
+    resetFoodSyncModeAfterMutation(scope);
     saveStore(); renderPreservingScroll(); return;
   }
   const libraryDelete = e.target.closest("[data-delete-library-food]");
@@ -2024,6 +2080,7 @@ document.addEventListener("submit", (e) => {
     const amount = Number(data.get("amount") || 0);
     const manual = ["kcal", "p", "c", "f"].some((key) => String(data.get(key) || "").trim() !== "");
     if (meal && food) {
+      const scope = foodSyncScope();
       if (!foodDef(food) || manual) {
         const nextFood = foodFromForm(data);
         if (!nextFood) {
@@ -2034,8 +2091,10 @@ document.addEventListener("submit", (e) => {
         syncFoodReferences(food);
       }
       const item = { id: uid("food"), food, amount, unit: foodDef(food)?.unit || data.get("unit") || "g" };
+      if (!scope) markFoodLocalOverride(item);
       meal.items.push(item);
-      syncFutureFoodAdd(meal, item);
+      if (scope) syncFutureFoodAdd(meal, item, scope);
+      resetFoodSyncModeAfterMutation(scope);
     }
   }
   if (e.target.id === "addLibraryFoodForm") {
@@ -2087,9 +2146,12 @@ document.addEventListener("submit", (e) => {
     const p = editablePlan();
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
     if (meal) {
+      const scope = foodSyncScope();
       const item = { id: uid("custom"), custom: true, food: data.get("name") || "自定义食物", name: data.get("name") || "自定义食物", amount: 1, unit: "份", kcal: Number(data.get("kcal") || 0), p: Number(data.get("p") || 0), c: Number(data.get("c") || 0), f: Number(data.get("f") || 0), kinds: foodKindValue(data.get("name") || "自定义食物", { kinds: data.get("kinds") }) };
+      if (!scope) markFoodLocalOverride(item);
       meal.items.push(item);
-      syncFutureFoodAdd(meal, item);
+      if (scope) syncFutureFoodAdd(meal, item, scope);
+      resetFoodSyncModeAfterMutation(scope);
     }
   }
   if (e.target.classList.contains("estimateMealForm")) {
@@ -2102,8 +2164,9 @@ document.addEventListener("submit", (e) => {
       protein: data.get("protein"),
     });
     if (meal) {
+      const scope = foodSyncScope();
       const name = String(data.get("name") || "").trim() || "估算餐";
-      meal.items.push({
+      const item = {
         id: uid("estimate"),
         custom: true,
         food: name,
@@ -2116,7 +2179,11 @@ document.addEventListener("submit", (e) => {
         f: macro.f,
         kinds: foodKindValue(name, { kinds: data.get("kinds") || 3 }),
         note: data.get("note") || "",
-      });
+      };
+      if (!scope) markFoodLocalOverride(item);
+      meal.items.push(item);
+      if (scope) syncFutureFoodAdd(meal, item, scope);
+      resetFoodSyncModeAfterMutation(scope);
       state.estimateMealId = "";
     }
   }
@@ -2125,6 +2192,7 @@ document.addEventListener("submit", (e) => {
     const meal = p.meals.find((m) => m.id === data.get("mealId"));
     const item = meal?.items.find((x) => x.id === data.get("itemId"));
     if (item) {
+      const scope = foodSyncScope();
       const originalFood = item.food || item.name;
       const name = String(data.get("name") || item.food || "自定义食物").trim();
       const amount = Number(data.get("amount") || 0);
@@ -2159,7 +2227,9 @@ document.addEventListener("submit", (e) => {
       item.name = name;
       item.amount = amount;
       item.unit = unit;
-      syncFutureFoodEdit(originalFood, item);
+      if (scope) syncFutureFoodEdit(originalFood, item, scope);
+      else markFoodLocalOverride(item);
+      resetFoodSyncModeAfterMutation(scope);
     }
   }
   if (e.target.classList.contains("editExerciseForm")) {
@@ -2216,6 +2286,11 @@ document.addEventListener("input", (e) => {
 document.addEventListener("change", (e) => {
   if (e.target.closest("#themeSelect")) {
     setTheme(e.target.value);
+    return;
+  }
+  if (e.target.name === "foodSyncMode") {
+    state.foodSyncMode = e.target.value;
+    renderPreservingScroll();
     return;
   }
   const form = e.target.closest("#addFoodForm");
